@@ -61,6 +61,34 @@ def find_matching_event(
     return None
 
 
+def mark_for_review(
+    event: AcademicEvent,
+    reason: str,
+) -> ReconciliationResult:
+    event.status = EventStatus.NEEDS_REVIEW
+    event.needs_review_reason = reason
+
+    return ReconciliationResult(
+        event=event,
+        action="needs_review",
+        message=f"Marked {event.title} for review: {reason}",
+    )
+
+
+def ensure_current_history(event: AcademicEvent) -> None:
+    if any(version.is_current for version in event.history):
+        return
+
+    event.history.append(
+        EventVersion(
+            due_at=event.due_at,
+            source_id=event.source_id,
+            reason="Previous current deadline preserved before update.",
+            is_current=True,
+        )
+    )
+
+
 def reconcile_candidate(
     candidate: EventCandidate,
     candidate_source_type: SourceType,
