@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -75,11 +75,18 @@ type ExtractionResult = {
   }>;
 };
 
+type CanvasCourse = {
+  id: number;
+  course_code: string;
+  name: string;
+};
+
 const seedAnnouncement = `Programming Assignment 2 has been extended.
 It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.`;
 
 function formatDate(value: string | null) {
   if (!value) return "Needs review";
+
   return new Intl.DateTimeFormat("en-US", {
     weekday: "short",
     month: "short",
@@ -90,9 +97,18 @@ function formatDate(value: string | null) {
 }
 
 function statusStyle(status: AcademicEvent["status"]) {
-  if (status === "updated") return "bg-amber-100 text-amber-800 border-amber-200";
-  if (status === "needs_review") return "bg-rose-100 text-rose-800 border-rose-200";
-  if (status === "verified") return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (status === "updated") {
+    return "bg-amber-100 text-amber-800 border-amber-200";
+  }
+
+  if (status === "needs_review") {
+    return "bg-rose-100 text-rose-800 border-rose-200";
+  }
+
+  if (status === "verified") {
+    return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  }
+
   return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
@@ -107,22 +123,38 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [notice, setNotice] = useState("");
+  const [canvasCourses, setCanvasCourses] = useState<CanvasCourse[]>([]);
+  const [canvasCourseId, setCanvasCourseId] = useState("");
+  const [canvasLoading, setCanvasLoading] = useState(false);
+  const [canvasImporting, setCanvasImporting] = useState(false);
 
   const coursesById = useMemo(
-    () => Object.fromEntries((workspace?.courses ?? []).map((course) => [course.id, course])),
+    () =>
+      Object.fromEntries(
+        (workspace?.courses ?? []).map((course) => [course.id, course]),
+      ),
     [workspace],
   );
 
   async function loadWorkspace() {
     setLoading(true);
+
     try {
-      const response = await fetch(`${API_URL}/api/demo/workspace`, { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not load DueScope demo workspace.");
-      const data = await response.json();
+      const response = await fetch(`${API_URL}/api/demo/workspace`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not load DueScope demo workspace.");
+      }
+
+      const data = (await response.json()) as Workspace;
       setWorkspace(data);
+
       setSelectedEvent((current) => {
         if (!current) return null;
-        return data.events.find((event: AcademicEvent) => event.id === current.id) ?? null;
+
+        return data.events.find((event) => event.id === current.id) ?? null;
       });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not reach the backend.");
@@ -132,8 +164,72 @@ export default function Home() {
   }
 
   useEffect(() => {
-    loadWorkspace();
+    void loadWorkspace();
   }, []);
+
+  async function loadCanvasCourses() {
+    setCanvasLoading(true);
+    setNotice("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/canvas/courses`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Could not load Canvas courses.");
+      }
+
+      const courses = data as CanvasCourse[];
+      setCanvasCourses(courses);
+
+      if (courses.length > 0) {
+        setCanvasCourseId(String(courses[0].id));
+        setNotice(
+          `Loaded ${courses.length} Canvas course(s). Choose one to import official due dates.`,
+        );
+      } else {
+        setNotice("No active Canvas courses were returned for this account.");
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not load Canvas courses.");
+    } finally {
+      setCanvasLoading(false);
+    }
+  }
+
+  async function importCanvasCourse() {
+    if (!canvasCourseId) {
+      setNotice("Load and select a Canvas course first.");
+      return;
+    }
+
+    setCanvasImporting(true);
+    setNotice("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/canvas/import-course/${canvasCourseId}`,
+        { method: "POST" },
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Could not import Canvas deadlines.");
+      }
+
+      setNotice(
+        `Imported ${data.imported_count} upcoming Canvas deadline(s). ` +
+          `${data.skipped_past_count} past deadline(s) skipped.`,
+      );
+
+      await loadWorkspace();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not import Canvas deadlines.");
+    } finally {
+      setCanvasImporting(false);
+    }
+  }
 
   async function scanSource() {
     setScanning(true);
@@ -160,9 +256,12 @@ export default function Home() {
       }
 
       const result = data as ExtractionResult;
+
       setNotice(
-        result.results.length
-          ? result.results.map((item) => `${item.title}: ${item.action}`).join(" · ")
+        result.results.length > 0
+          ? result.results
+              .map((item) => `${item.title}: ${item.action}`)
+              .join(" - ")
           : "No deadlines found in this source.",
       );
 
@@ -183,10 +282,16 @@ export default function Home() {
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail ?? "Could not update approval.");
+
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Could not update approval.");
+      }
 
       await loadWorkspace();
-      setNotice(`${event.title} ${event.approved ? "removed from" : "approved for"} calendar export.`);
+
+      setNotice(
+        `${event.title} ${event.approved ? "removed from" : "approved for"} calendar export.`,
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not update approval.");
     }
@@ -194,10 +299,14 @@ export default function Home() {
 
   async function exportCalendar() {
     const eventIds = (workspace?.events ?? [])
-      .filter((event) => event.approved && ["verified", "updated"].includes(event.status))
+      .filter(
+        (event) =>
+          event.approved &&
+          ["verified", "updated"].includes(event.status),
+      )
       .map((event) => event.id);
 
-    if (!eventIds.length) {
+    if (eventIds.length === 0) {
       setNotice("Approve at least one verified or updated deadline before exporting.");
       return;
     }
@@ -220,12 +329,17 @@ export default function Home() {
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
+
       anchor.href = url;
       anchor.download = "duescope-calendar.ics";
+      document.body.appendChild(anchor);
       anchor.click();
+      anchor.remove();
       URL.revokeObjectURL(url);
 
-      setNotice(`Exported ${eventIds.length} approved deadline(s) to an ICS calendar file.`);
+      setNotice(
+        `Exported ${eventIds.length} approved deadline(s) to an ICS calendar file.`,
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Calendar export failed.");
     } finally {
@@ -238,7 +352,7 @@ export default function Home() {
       <main className="grid min-h-screen place-items-center bg-slate-950 text-white">
         <div className="flex items-center gap-3 text-lg">
           <Loader2 className="animate-spin" />
-          Loading DueScope…
+          Loading DueScope...
         </div>
       </main>
     );
@@ -254,19 +368,29 @@ export default function Home() {
           <div>
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.22em] text-cyan-300">
               <Sparkles size={16} />
-              HackRice 16 · Work & Productivity
+              HackRice 16 - Work &amp; Productivity
             </div>
-            <h1 className="text-4xl font-black tracking-tight sm:text-5xl">DueScope</h1>
+
+            <h1 className="text-4xl font-black tracking-tight sm:text-5xl">
+              DueScope
+            </h1>
+
             <p className="mt-3 max-w-2xl text-slate-400">
-              A source-backed academic calendar that detects deadline changes before they become missed work.
+              A source-backed academic calendar that detects deadline changes before
+              they become missed work.
             </p>
           </div>
+
           <button
             onClick={exportCalendar}
             disabled={exporting}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {exporting ? <Loader2 size={18} className="animate-spin" /> : <CalendarDays size={18} />}
+            {exporting ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <CalendarDays size={18} />
+            )}
             Export approved calendar
           </button>
         </header>
@@ -285,7 +409,8 @@ export default function Home() {
               <div>
                 <p className="font-bold text-amber-200">High workload detected</p>
                 <p className="mt-1 text-sm text-amber-100/80">
-                  {highWorkload.date}: {highWorkload.minutes} estimated minutes. {highWorkload.reason}
+                  {highWorkload.date}: {highWorkload.minutes} estimated minutes.{" "}
+                  {highWorkload.reason}
                 </p>
               </div>
             </div>
@@ -298,12 +423,16 @@ export default function Home() {
               <div className="mb-5 flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-bold">Upcoming deadlines</h2>
-                  <p className="mt-1 text-sm text-slate-400">Click an event to inspect evidence and date history.</p>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Click an event to inspect evidence and date history.
+                  </p>
                 </div>
+
                 <button
                   onClick={loadWorkspace}
                   className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-cyan-400 hover:text-cyan-300"
                   title="Refresh events"
+                  aria-label="Refresh events"
                 >
                   <RefreshCw size={17} />
                 </button>
@@ -312,9 +441,12 @@ export default function Home() {
               <div className="space-y-3">
                 {events
                   .slice()
-                  .sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"))
+                  .sort((a, b) =>
+                    (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"),
+                  )
                   .map((event) => {
                     const course = coursesById[event.course_id];
+
                     return (
                       <button
                         key={event.id}
@@ -325,30 +457,110 @@ export default function Home() {
                           className="h-11 w-1.5 rounded-full"
                           style={{ backgroundColor: course?.color ?? "#64748b" }}
                         />
+
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="truncate font-bold">{event.title}</p>
-                            <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusStyle(event.status)}`}>
+
+                            <span
+                              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusStyle(
+                                event.status,
+                              )}`}
+                            >
                               {event.status.replace("_", " ")}
                             </span>
                           </div>
+
                           <p className="mt-1 text-sm text-slate-400">
-                            {course?.code ?? event.course_id} · {formatDate(event.due_at)}
+                            {course?.code ?? event.course_id} -{" "}
+                            {formatDate(event.due_at)}
                           </p>
                         </div>
-                        <ChevronRight className="shrink-0 text-slate-500" size={20} />
+
+                        <ChevronRight
+                          className="shrink-0 text-slate-500"
+                          size={20}
+                        />
                       </button>
                     );
                   })}
+
+                {events.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
+                    No upcoming deadlines yet. Import Canvas dates or scan a course
+                    update to begin.
+                  </div>
+                )}
               </div>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
               <div className="mb-4 flex items-center gap-2">
+                <CalendarDays className="text-cyan-300" size={20} />
+
+                <div>
+                  <h2 className="text-xl font-bold">Import from Canvas</h2>
+                  <p className="text-sm text-slate-400">
+                    Pull official assignment due dates directly from Canvas.
+                  </p>
+                </div>
+              </div>
+
+              {canvasCourses.length === 0 ? (
+                <button
+                  onClick={loadCanvasCourses}
+                  disabled={canvasLoading}
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {canvasLoading ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={18} />
+                  )}
+                  {canvasLoading ? "Loading Canvas..." : "Load Canvas courses"}
+                </button>
+              ) : (
+                <div className="flex flex-col gap-3 sm:flex-row">
+                  <select
+                    value={canvasCourseId}
+                    onChange={(event) => setCanvasCourseId(event.target.value)}
+                    className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                    aria-label="Canvas course"
+                  >
+                    {canvasCourses.map((course) => (
+                      <option key={course.id} value={course.id}>
+                        {course.course_code
+                          ? `${course.course_code} - ${course.name}`
+                          : course.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={importCanvasCourse}
+                    disabled={canvasImporting}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-400/60 px-4 py-2.5 font-bold text-cyan-200 transition hover:bg-cyan-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {canvasImporting ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <CalendarDays size={18} />
+                    )}
+                    {canvasImporting ? "Importing..." : "Import deadlines"}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+              <div className="mb-4 flex items-center gap-2">
                 <FileText className="text-cyan-300" size={20} />
+
                 <div>
                   <h2 className="text-xl font-bold">Scan a course update</h2>
-                  <p className="text-sm text-slate-400">Paste an announcement, email, or syllabus excerpt.</p>
+                  <p className="text-sm text-slate-400">
+                    Paste an announcement, email, or syllabus excerpt.
+                  </p>
                 </div>
               </div>
 
@@ -357,10 +569,11 @@ export default function Home() {
                   value={courseId}
                   onChange={(event) => setCourseId(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                  aria-label="DueScope course"
                 >
                   {(workspace?.courses ?? []).map((course) => (
                     <option key={course.id} value={course.id}>
-                      {course.code} — {course.name}
+                      {course.code} - {course.name}
                     </option>
                   ))}
                 </select>
@@ -369,8 +582,11 @@ export default function Home() {
                   value={sourceType}
                   onChange={(event) => setSourceType(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
+                  aria-label="Source type"
                 >
-                  <option value="instructor_announcement">Canvas announcement</option>
+                  <option value="instructor_announcement">
+                    Canvas announcement
+                  </option>
                   <option value="instructor_email">Instructor email</option>
                   <option value="syllabus">Syllabus</option>
                   <option value="other">Other course source</option>
@@ -388,7 +604,7 @@ export default function Home() {
                 value={sourceText}
                 onChange={(event) => setSourceText(event.target.value)}
                 className="mt-3 min-h-36 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm leading-6 outline-none focus:border-cyan-400"
-                placeholder="Paste a course announcement, email, or syllabus excerpt…"
+                placeholder="Paste a course announcement, email, or syllabus excerpt..."
               />
 
               <button
@@ -396,8 +612,12 @@ export default function Home() {
                 disabled={scanning || !sourceText.trim()}
                 className="mt-3 inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {scanning ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-                {scanning ? "Scanning with Gemini…" : "Scan for deadlines"}
+                {scanning ? (
+                  <Loader2 size={18} className="animate-spin" />
+                ) : (
+                  <Sparkles size={18} />
+                )}
+                {scanning ? "Scanning with Gemini..." : "Scan for deadlines"}
               </button>
             </div>
           </section>
@@ -405,20 +625,35 @@ export default function Home() {
           <aside className="space-y-7">
             <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
               <h2 className="text-xl font-bold">Changes to review</h2>
+
               <div className="mt-4 space-y-3">
                 {(workspace?.changes ?? []).map((change) => (
                   <button
                     key={`${change.event_id}-${change.kind}`}
                     onClick={() => {
-                      const event = events.find((item) => item.id === change.event_id);
-                      if (event) setSelectedEvent(event);
+                      const event = events.find(
+                        (item) => item.id === change.event_id,
+                      );
+
+                      if (event) {
+                        setSelectedEvent(event);
+                      }
                     }}
                     className="w-full rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-left text-sm transition hover:border-cyan-400/60"
                   >
-                    <p className="font-semibold capitalize text-cyan-200">{change.kind.replace("_", " ")}</p>
+                    <p className="font-semibold capitalize text-cyan-200">
+                      {change.kind.replace("_", " ")}
+                    </p>
+
                     <p className="mt-1 text-slate-400">{change.message}</p>
                   </button>
                 ))}
+
+                {(workspace?.changes ?? []).length === 0 && (
+                  <p className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
+                    No deadline changes need review right now.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -429,8 +664,11 @@ export default function Home() {
                 <div className="mt-4 space-y-4">
                   <div>
                     <p className="text-sm font-bold">{selectedEvent.title}</p>
+
                     <p className="mt-1 text-sm text-slate-400">
-                      {coursesById[selectedEvent.course_id]?.code} · {formatDate(selectedEvent.due_at)}
+                      {coursesById[selectedEvent.course_id]?.code ??
+                        selectedEvent.course_id}{" "}
+                      - {formatDate(selectedEvent.due_at)}
                     </p>
                   </div>
 
@@ -438,7 +676,10 @@ export default function Home() {
                     <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
                       Source evidence
                     </p>
-                    <p className="text-sm leading-6 text-slate-300">“{selectedEvent.source_excerpt}”</p>
+
+                    <p className="text-sm leading-6 text-slate-300">
+                      &quot;{selectedEvent.source_excerpt}&quot;
+                    </p>
                   </div>
 
                   {selectedEvent.history.length > 0 && (
@@ -446,16 +687,32 @@ export default function Home() {
                       <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
                         Deadline history
                       </p>
+
                       <div className="space-y-2">
                         {selectedEvent.history.map((version, index) => (
-                          <div key={`${version.source_id}-${index}`} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm">
+                          <div
+                            key={`${version.source_id}-${index}`}
+                            className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm"
+                          >
                             <div className="flex items-center justify-between gap-3">
-                              <span className="font-medium">{formatDate(version.due_at)}</span>
-                              <span className={version.is_current ? "text-emerald-300" : "text-slate-500"}>
+                              <span className="font-medium">
+                                {formatDate(version.due_at)}
+                              </span>
+
+                              <span
+                                className={
+                                  version.is_current
+                                    ? "text-emerald-300"
+                                    : "text-slate-500"
+                                }
+                              >
                                 {version.is_current ? "Current" : "Previous"}
                               </span>
                             </div>
-                            <p className="mt-1 text-xs text-slate-500">{version.reason}</p>
+
+                            <p className="mt-1 text-xs text-slate-500">
+                              {version.reason}
+                            </p>
                           </div>
                         ))}
                       </div>
@@ -470,16 +727,21 @@ export default function Home() {
 
                   <button
                     onClick={() => toggleApproval(selectedEvent)}
-                    disabled={!["verified", "updated"].includes(selectedEvent.status)}
+                    disabled={
+                      !["verified", "updated"].includes(selectedEvent.status)
+                    }
                     className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/60 px-4 py-2.5 font-bold text-cyan-200 transition hover:bg-cyan-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-600"
                   >
                     <Check size={17} />
-                    {selectedEvent.approved ? "Remove approval" : "Approve for export"}
+                    {selectedEvent.approved
+                      ? "Remove approval"
+                      : "Approve for export"}
                   </button>
                 </div>
               ) : (
                 <div className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
-                  Select a deadline to inspect its evidence, date history, and export approval.
+                  Select a deadline to inspect its evidence, date history, and export
+                  approval.
                 </div>
               )}
             </div>
@@ -489,6 +751,7 @@ export default function Home() {
                 <Clock3 size={20} className="text-cyan-300" />
                 <h2 className="text-xl font-bold">How DueScope works</h2>
               </div>
+
               <ol className="mt-4 space-y-3 text-sm text-slate-400">
                 <li>1. Scan course information from Canvas, email, or a syllabus.</li>
                 <li>2. Gemini extracts only source-backed deadlines.</li>
