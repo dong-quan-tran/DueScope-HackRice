@@ -88,8 +88,14 @@ def reconcile_event(request: ReconcileRequest) -> dict:
     else:
         DEMO_WORKSPACE["events"][existing_index] = event_payload
 
+
     return {
         "action": result.action,
         "message": result.message,
         "event": event_payload,
+        "proposed_candidate": (
+            result.proposed_candidate.model_dump(mode="json")
+            if result.proposed_candidate is not None
+            else None
+        ),
     }
