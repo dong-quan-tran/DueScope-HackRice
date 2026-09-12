@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter
+from fastapi import APIRouter
 
 router = APIRouter(tags=["demo"])
 
@@ -96,7 +96,7 @@ DEMO_WORKSPACE = {
             "approved": False,
             "workload_minutes": 420,
             "source_id": "source-algorithms-announcement",
-            "source_excerpt": "Programming Assignment 2 is still due Friday at 11:59 PM. Please start the assignment early; expected work time is 6–8 hours.",
+            "source_excerpt": "Programming Assignment 2 is still due Friday at 11:59 PM. Please start the assignment early; expected work time is 6-8 hours.",
             "history": [],
         },
         {
@@ -110,7 +110,7 @@ DEMO_WORKSPACE = {
             "approved": False,
             "workload_minutes": 300,
             "source_id": "source-algorithms-syllabus",
-            "source_excerpt": "Midterm Exam — Wednesday, September 23, 7:00 PM",
+            "source_excerpt": "Midterm Exam - Wednesday, September 23, 7:00 PM",
             "history": [],
         },
         {

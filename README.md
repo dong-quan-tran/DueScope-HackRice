@@ -1,4 +1,4 @@
-﻿@'
+@'
 # DueScope
 
 DueScope is an evidence-backed academic deadline manager built for HackRice 16.
@@ -356,8 +356,8 @@ DueScope/
 
 ## Team
 
-- Khoi Anh Le Nguyen — [@ngkhoi111](https://github.com/ngkhoi111)
-- Gail Le — [@dong-quan-tran](https://github.com/dong-quan-tran)
+- Khoi Anh Le Nguyen - [@ngkhoi111](https://github.com/ngkhoi111)
+- Gail Le - [@dong-quan-tran](https://github.com/dong-quan-tran)
 
 ## HackRice 16
 

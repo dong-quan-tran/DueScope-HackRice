@@ -1,4 +1,4 @@
-# DueScope — HackRice 16 Blueprint
+# DueScope - HackRice 16 Blueprint
 
 > **Goal:** Build a trustworthy academic-deadline command center that turns syllabi, Canvas-style announcements, and course emails into a unified, evidence-backed schedule. It detects changed deadlines, identifies workload collisions, and exports approved events to a calendar.
 >
@@ -70,7 +70,7 @@ The project is demo-ready when all of the following work locally and in the depl
 
 - [ ] Paste a syllabus, announcement, or email and extract events with Gemini.
 - [ ] Use Tiger Data/PostgreSQL for sources, events, and event-version history.
-- [ ] Backboard-powered question: “What changed this week?”
+- [ ] Backboard-powered question: "What changed this week?"
 - [ ] ElevenLabs plays a daily briefing generated from verified event data.
 - [ ] Deployed to Vultr and reachable on a GoDaddy domain.
 
@@ -84,15 +84,15 @@ Use sponsors only when they strengthen the core product.
 |---:|---|---|---|
 | 1 | Google Gemini | Structured extraction of deadlines from pasted/uploaded syllabus, announcement, and email content | This is core automation: unstructured course text becomes validated event candidates |
 | 2 | Tiger Data | PostgreSQL storage for source records, canonical events, version history, and workload queries | Makes the changed-deadline audit trail real and supports workload-over-time views |
-| 3 | ElevenLabs | Optional audio “Today’s Academic Briefing” | Strong, accessible demo payoff with low implementation cost once events exist |
+| 3 | ElevenLabs | Optional audio "Today's Academic Briefing" | Strong, accessible demo payoff with low implementation cost once events exist |
 | 4 | Vultr | Deploy frontend/backend or one containerized service | Useful for a public demo and deployment sponsor credit |
 | 5 | GoDaddy | Register/use a branded domain if deployment is stable | Good polish; do this only after deployment works |
-| Optional | Backboard.io | Source-grounded “Ask DueScope” assistant with persistent course context | Nice extension, but skip if it distracts from extraction/reconciliation |
+| Optional | Backboard.io | Source-grounded "Ask DueScope" assistant with persistent course context | Nice extension, but skip if it distracts from extraction/reconciliation |
 | Skip unless fully complete | Presage / Solana | No required feature | They do not materially improve the core workflow within 24 hours |
 
 ### Sponsor decision rule
 
-At any point, ask: **Does this make the “source → changed deadline → trustworthy calendar” story more reliable or more visible?** If no, do not build it.
+At any point, ask: **Does this make the "source → changed deadline → trustworthy calendar" story more reliable or more visible?** If no, do not build it.
 
 ---
 
@@ -171,11 +171,11 @@ Build this first. It is the fallback if Canvas, Gmail, or model APIs are unavail
 #### A. Algorithms syllabus
 
 ```text
-CSE 3310 — Algorithms
+CSE 3310 - Algorithms
 
-Quiz 2 — Tuesday, September 15, 11:59 PM
-Programming Assignment 2 — Friday, September 18, 11:59 PM
-Midterm Exam — Wednesday, September 23, 7:00 PM
+Quiz 2 - Tuesday, September 15, 11:59 PM
+Programming Assignment 2 - Friday, September 18, 11:59 PM
+Midterm Exam - Wednesday, September 23, 7:00 PM
 ```
 
 #### B. Algorithms Canvas-style announcement
@@ -184,7 +184,7 @@ Midterm Exam — Wednesday, September 23, 7:00 PM
 Quiz 2 has been moved from Tuesday to Thursday, September 17.
 It will remain available in Canvas from 8:00 AM to 11:59 PM.
 Programming Assignment 2 is still due Friday at 11:59 PM.
-Please start the assignment early; expected work time is 6–8 hours.
+Please start the assignment early; expected work time is 6-8 hours.
 ```
 
 #### C. Calculus instructor email
@@ -287,9 +287,9 @@ Do not commit real keys, OAuth secrets, database URLs with passwords, or exporte
 
 ## 7. Phased execution plan
 
-## Phase 0 — Project alignment and scaffolding
+## Phase 0 - Project alignment and scaffolding
 
-**Time budget:** 30–45 minutes
+**Time budget:** 30-45 minutes
 
 **Objective:** Establish a shared codebase and freeze the MVP before either person builds isolated features.
 
@@ -325,9 +325,9 @@ GET  /api/briefing                -> verified-event daily briefing text
 
 ---
 
-## Phase 1 — Static demo UI and seed data
+## Phase 1 - Static demo UI and seed data
 
-**Time budget:** 2–3 hours
+**Time budget:** 2-3 hours
 
 **Objective:** Make the project visually demonstrable immediately, even before any AI or database is connected.
 
@@ -336,8 +336,8 @@ GET  /api/briefing                -> verified-event daily briefing text
 - [ ] Create a landing/dashboard page with **Try Demo Workspace**.
 - [ ] Create a weekly calendar/timeline with events grouped by course.
 - [ ] Add a course filter and event-type badges: assignment, quiz, exam, lab, review.
-- [ ] Add a “Changes to review” panel.
-- [ ] Add a “High workload” banner for Friday, September 18.
+- [ ] Add a "Changes to review" panel.
+- [ ] Add a "High workload" banner for Friday, September 18.
 - [ ] Create an event detail drawer with source excerpt and history placeholders.
 
 ### Backend/data tasks
@@ -353,9 +353,9 @@ GET  /api/briefing                -> verified-event daily briefing text
 
 ---
 
-## Phase 2 — Event model and reconciliation engine
+## Phase 2 - Event model and reconciliation engine
 
-**Time budget:** 3–4 hours
+**Time budget:** 3-4 hours
 
 **Objective:** Make changed-deadline handling real and explainable.
 
@@ -411,7 +411,7 @@ SOURCE_PRIORITY = {
 Input:
 
 ```text
-Syllabus: Quiz 2 — Tuesday, September 15, 11:59 PM
+Syllabus: Quiz 2 - Tuesday, September 15, 11:59 PM
 Announcement: Quiz 2 has been moved to Thursday, September 17, 11:59 PM
 ```
 
@@ -433,9 +433,9 @@ Reason: newer instructor announcement explicitly states reschedule
 
 ---
 
-## Phase 3 — Gemini extraction from pasted text
+## Phase 3 - Gemini extraction from pasted text
 
-**Time budget:** 3–4 hours
+**Time budget:** 3-4 hours
 
 **Objective:** Turn new, unstructured course information into candidate events.
 
@@ -490,7 +490,7 @@ File upload is optional. If adding it, start with `.txt` and PDF text extraction
 ### Fallback
 
 - [ ] Save expected parsed JSON for every seed source under `fixtures/extracted-events/`.
-- [ ] When `DEMO_MODE=true` or Gemini errors, use fixture results and display “Demo extraction used.”
+- [ ] When `DEMO_MODE=true` or Gemini errors, use fixture results and display "Demo extraction used."
 
 ### Done when
 
@@ -501,9 +501,9 @@ File upload is optional. If adding it, start with `.txt` and PDF text extraction
 
 ---
 
-## Phase 4 — Evidence-first review dashboard
+## Phase 4 - Evidence-first review dashboard
 
-**Time budget:** 2–3 hours
+**Time budget:** 2-3 hours
 
 **Objective:** Make the system trustworthy and easy to understand at a glance.
 
@@ -517,17 +517,17 @@ File upload is optional. If adding it, start with `.txt` and PDF text extraction
 
 ### Status labels
 
-- [ ] `Verified` — explicit, high-confidence information from a trusted source.
-- [ ] `Updated` — a newer source superseded a prior event version.
-- [ ] `Needs review` — ambiguous date or conflicting source.
-- [ ] `Canceled` — explicitly canceled event.
+- [ ] `Verified` - explicit, high-confidence information from a trusted source.
+- [ ] `Updated` - a newer source superseded a prior event version.
+- [ ] `Needs review` - ambiguous date or conflicting source.
+- [ ] `Canceled` - explicitly canceled event.
 
 ### Interaction tasks
 
 - [ ] Clicking an event opens its detail drawer.
 - [ ] Clicking an evidence item scrolls/highlights its exact excerpt.
 - [ ] User can approve/reject a proposed event for calendar export.
-- [ ] User can mark a candidate as “not a deadline.”
+- [ ] User can mark a candidate as "not a deadline."
 - [ ] Display no fake precision such as arbitrary confidence percentages.
 
 ### Done when
@@ -537,9 +537,9 @@ File upload is optional. If adding it, start with `.txt` and PDF text extraction
 
 ---
 
-## Phase 5 — Workload detection and ICS export
+## Phase 5 - Workload detection and ICS export
 
-**Time budget:** 1.5–2.5 hours
+**Time budget:** 1.5-2.5 hours
 
 **Objective:** Turn deadline discovery into a practical action plan.
 
@@ -570,8 +570,8 @@ Show the calculation as a heuristic, not a prediction.
 - [ ] Assign baseline workload estimates by event type.
 - [ ] Sum estimates per day.
 - [ ] Flag high-load days when a configurable threshold is exceeded.
-- [ ] Add a readable explanation: “Friday includes Algorithms Assignment 2 and Calculus Exam 1.”
-- [ ] Add a small recommendation: “Start Assignment 2 before Thursday” only when based on explicit/visible data.
+- [ ] Add a readable explanation: "Friday includes Algorithms Assignment 2 and Calculus Exam 1."
+- [ ] Add a small recommendation: "Start Assignment 2 before Thursday" only when based on explicit/visible data.
 
 ### ICS export tasks
 
@@ -589,9 +589,9 @@ Show the calculation as a heuristic, not a prediction.
 
 ---
 
-## Phase 6 — One polished sponsor extension
+## Phase 6 - One polished sponsor extension
 
-**Time budget:** 1–2 hours maximum
+**Time budget:** 1-2 hours maximum
 
 **Objective:** Add one memorable enhancement only after the core flow works.
 
@@ -610,20 +610,20 @@ and Calculus Exam 1 runs from 6 to 8 PM. Start the assignment today.
 Tasks:
 
 - [ ] Build `GET /api/briefing` from database/fixture events.
-- [ ] Keep the text short: 40–70 words.
+- [ ] Keep the text short: 40-70 words.
 - [ ] Generate audio using ElevenLabs.
 - [ ] Add a play button and transcript.
 - [ ] Gracefully show text-only briefing if audio generation fails.
 
-### Alternative option: Backboard “Ask DueScope”
+### Alternative option: Backboard "Ask DueScope"
 
 Choose this only if an ElevenLabs demo is not possible or your assistant integration is already fast.
 
 Required questions:
 
-- “What changed this week?”
-- “What is due before Friday?”
-- “Why did Quiz 2 move?”
+- "What changed this week?"
+- "What is due before Friday?"
+- "Why did Quiz 2 move?"
 
 The answer must be based only on stored event/source data and must cite source types and event dates.
 
@@ -635,9 +635,9 @@ The answer must be based only on stored event/source data and must cite source t
 
 ---
 
-## Phase 7 — Deployment, testing, and submission
+## Phase 7 - Deployment, testing, and submission
 
-**Time budget:** 2–3 hours
+**Time budget:** 2-3 hours
 
 **Objective:** Make the project dependable for judges and complete the required submission material.
 
@@ -645,7 +645,7 @@ The answer must be based only on stored event/source data and must cite source t
 
 - [ ] Run the seeded demo with no external API key.
 - [ ] Test invalid/empty source input.
-- [ ] Test ambiguous phrase such as “due next Friday”; confirm it becomes `Needs review` when unresolved.
+- [ ] Test ambiguous phrase such as "due next Friday"; confirm it becomes `Needs review` when unresolved.
 - [ ] Test duplicate import behavior.
 - [ ] Test reschedule behavior.
 - [ ] Test `.ics` generation.
@@ -666,7 +666,7 @@ The answer must be based only on stored event/source data and must cite source t
 - [ ] README: problem, solution, features, architecture, sponsor technologies, setup, limitations.
 - [ ] Devpost: concise description, screenshots, team roles, tech stack.
 - [ ] Add a short architecture diagram.
-- [ ] Add a 60–90 second demo video if required/permitted.
+- [ ] Add a 60-90 second demo video if required/permitted.
 - [ ] Rehearse the live demo at least three times.
 
 ### Done when
@@ -749,43 +749,43 @@ chore: deploy demo and document setup
 
 ## 10. 90-second demo script
 
-### 0–12 seconds — Problem
+### 0-12 seconds - Problem
 
-> “Students do not miss deadlines because they lack a calendar. They miss them because dates are scattered across syllabi, Canvas, announcements, and email—and those sources change.”
+> "Students do not miss deadlines because they lack a calendar. They miss them because dates are scattered across syllabi, Canvas, announcements, and email-and those sources change."
 
 Show source cards and the original Algorithms syllabus entry.
 
-### 12–28 seconds — Extraction
+### 12-28 seconds - Extraction
 
-> “DueScope turns course information into evidence-backed events. Each date keeps the exact source text that supports it.”
+> "DueScope turns course information into evidence-backed events. Each date keeps the exact source text that supports it."
 
 Show Quiz 2, Assignment 2, and Exam 1 on the calendar.
 
-### 28–50 seconds — Core insight
+### 28-50 seconds - Core insight
 
-> “Here, the syllabus says Quiz 2 was due Tuesday. A later Canvas announcement moves it to Thursday. Instead of duplicating the event, DueScope updates one canonical deadline, preserves the old version, and explains why.”
+> "Here, the syllabus says Quiz 2 was due Tuesday. A later Canvas announcement moves it to Thursday. Instead of duplicating the event, DueScope updates one canonical deadline, preserves the old version, and explains why."
 
 Open the event detail drawer, history, and announcement excerpt.
 
-### 50–66 seconds — Actionable planning
+### 50-66 seconds - Actionable planning
 
-> “The updated schedule reveals a high-workload Friday: an Algorithms assignment and a Calculus exam. DueScope flags the collision and makes the schedule actionable.”
+> "The updated schedule reveals a high-workload Friday: an Algorithms assignment and a Calculus exam. DueScope flags the collision and makes the schedule actionable."
 
 Show workload banner and week view.
 
-### 66–80 seconds — Calendar trust
+### 66-80 seconds - Calendar trust
 
-> “Students approve verified changes before export, so the app never silently writes uncertain dates into a calendar.”
+> "Students approve verified changes before export, so the app never silently writes uncertain dates into a calendar."
 
 Select events and show `.ics` export.
 
-### 80–90 seconds — Optional payoff
+### 80-90 seconds - Optional payoff
 
-> “For a quick morning check-in, DueScope produces an accessible spoken briefing based only on verified deadlines.”
+> "For a quick morning check-in, DueScope produces an accessible spoken briefing based only on verified deadlines."
 
-Play 5–8 seconds of ElevenLabs audio.
+Play 5-8 seconds of ElevenLabs audio.
 
-> “DueScope makes academic calendars trustworthy: it finds changes, proves them, and keeps students ahead.”
+> "DueScope makes academic calendars trustworthy: it finds changes, proves them, and keeps students ahead."
 
 ---
 

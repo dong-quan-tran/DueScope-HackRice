@@ -55,7 +55,7 @@ def test_proposes_change_from_newer_higher_priority_announcement():
         approved=True,
         workload_minutes=90,
         source_id="syllabus-1",
-        source_excerpt="Quiz 2 — Tuesday, September 15.",
+        source_excerpt="Quiz 2 - Tuesday, September 15.",
         history=[
             EventVersion(
                 due_at=old_date,
@@ -132,7 +132,7 @@ def test_proposes_change_when_lower_priority_source_conflicts():
         title="Quiz 2",
         due_at=datetime.fromisoformat("2026-09-15T23:59:00-05:00"),
         source_id="syllabus-1",
-        source_excerpt="Quiz 2 — Tuesday, September 15.",
+        source_excerpt="Quiz 2 - Tuesday, September 15.",
         change_type=ChangeType.UNKNOWN,
     )
 

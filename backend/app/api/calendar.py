@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -68,7 +68,7 @@ def export_calendar(request: CalendarExportRequest) -> Response:
         )
 
     course_names = {
-        course["id"]: f'{course["code"]} — {course["name"]}'
+        course["id"]: f'{course["code"]} - {course["name"]}'
         for course in DEMO_WORKSPACE["courses"]
     }
 
