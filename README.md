@@ -45,7 +45,7 @@ Invoke-RestMethod http://127.0.0.1:8001/api/demo/workspace | ConvertTo-Json -Dep
 ## Team
 
 - Khoi Anh Le Nguyen — [@ngkhoi111](https://github.com/ngkhoi111)
-- Gail Le — [@dong-quan-tran](https://github.com/dong-quan-tran)
+- Dong Quan Tran — [@dong-quan-tran](https://github.com/dong-quan-tran)
 
 ## HackRice 16
 
