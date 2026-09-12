@@ -2,15 +2,16 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
+from uuid import uuid4
 
 from app.schemas.events import (
     AcademicEvent,
-    ChangeType,
     EventCandidate,
     EventStatus,
     EventVersion,
     SourceType,
 )
+
 
 SOURCE_PRIORITY = {
     SourceType.CANVAS_DUE_FIELD: 100,
@@ -26,13 +27,18 @@ class ReconciliationResult:
     event: AcademicEvent
     action: str
     message: str
+    proposed_candidate: Optional[EventCandidate] = None
 
 
 def normalize_title(value: str) -> str:
     value = value.lower()
-    value = re.sub(r'[^a-z0-9\s]', ' ', value)
-    value = re.sub(r'\b(the|a|an|due|assignment)\b', ' ', value)
-    return ' '.join(value.split())
+    value = re.sub(r"[^a-z0-9\s]", " ", value)
+    value = re.sub(r"\b(the|a|an|due)\b", " ", value)
+    return " ".join(value.split())
+
+
+def has_timezone(value: datetime) -> bool:
+    return value.tzinfo is not None and value.utcoffset() is not None
 
 
 def find_matching_event(
@@ -40,6 +46,9 @@ def find_matching_event(
     events: list[AcademicEvent],
 ) -> Optional[AcademicEvent]:
     candidate_title = normalize_title(candidate.title)
+
+    if not candidate_title:
+        return None
 
     for event in events:
         if event.course_id != candidate.course_id:
@@ -60,90 +69,151 @@ def reconcile_candidate(
     source_types: dict[str, SourceType],
     source_received_at: dict[str, datetime],
 ) -> ReconciliationResult:
-    existing = find_matching_event(candidate, events)
+    # Work with a copy so the incoming candidate stays unchanged.
+    proposed = candidate.model_copy(deep=True)
+    warnings = []
+
+    if proposed.needs_review_reason:
+        warnings.append(proposed.needs_review_reason)
+
+    if not proposed.title.strip():
+        warnings.append("Title is missing or blank.")
+
+    if not proposed.source_excerpt.strip():
+        warnings.append("Source excerpt is missing or blank.")
+
+    if proposed.due_at is None:
+        warnings.append("The deadline is missing.")
+    elif not has_timezone(proposed.due_at):
+        warnings.append("The deadline must include timezone information.")
+
+    proposed.needs_review_reason = (
+        " | ".join(warnings) if warnings else None
+    )
+
+    existing = find_matching_event(proposed, events)
 
     if existing is None:
         event = AcademicEvent(
-            id=f"event-{normalize_title(candidate.title).replace(' ', '-')}",
-            course_id=candidate.course_id,
-            type=candidate.type,
-            title=candidate.title,
-            starts_at=candidate.starts_at,
-            due_at=candidate.due_at,
+            id=f"event-{uuid4()}",
+            course_id=proposed.course_id,
+            type=proposed.type,
+            title=proposed.title,
+            starts_at=proposed.starts_at,
+            due_at=proposed.due_at,
             status=(
                 EventStatus.NEEDS_REVIEW
-                if candidate.needs_review_reason
+                if warnings
                 else EventStatus.VERIFIED
             ),
+            approved=False,
             workload_minutes=0,
-            source_id=candidate.source_id,
-            source_excerpt=candidate.source_excerpt,
-            needs_review_reason=candidate.needs_review_reason,
+            source_id=proposed.source_id,
+            source_excerpt=proposed.source_excerpt,
+            needs_review_reason=proposed.needs_review_reason,
             history=[
                 EventVersion(
-                    due_at=candidate.due_at,
-                    source_id=candidate.source_id,
-                    reason="New deadline discovered from source",
+                    due_at=proposed.due_at,
+                    source_id=proposed.source_id,
+                    reason="New deadline discovered from source.",
                     is_current=True,
                 )
             ],
         )
+
+        message = f"Created new event: {event.title}."
+        if warnings:
+            message += f" Review needed: {proposed.needs_review_reason}"
+
         return ReconciliationResult(
             event=event,
             action="created",
-            message=f"Created new event: {event.title}.",
+            message=message,
         )
 
-    existing_source_type = source_types.get(existing.source_id, SourceType.MANUAL_ENTRY)
-    existing_source_time = source_received_at.get(existing.source_id, datetime.min)
+    reasons = []
 
-    incoming_priority = SOURCE_PRIORITY[candidate_source_type]
-    existing_priority = SOURCE_PRIORITY[existing_source_type]
+    if existing.needs_review_reason:
+        reasons.append(
+            f"Existing warning: {existing.needs_review_reason}"
+        )
 
-    has_new_due_date = candidate.due_at != existing.due_at
-    incoming_is_newer = candidate_received_at >= existing_source_time
-    incoming_is_stronger = incoming_priority >= existing_priority
+    if proposed.needs_review_reason:
+        reasons.append(
+            f"Incoming warning: {proposed.needs_review_reason}"
+        )
 
-    if not has_new_due_date:
+    if proposed.due_at == existing.due_at:
+        if reasons:
+            return ReconciliationResult(
+                event=existing,
+                action="needs_review",
+                message=(
+                    "The deadline is unchanged, but review is needed. "
+                    + " ".join(reasons)
+                ),
+                proposed_candidate=proposed,
+            )
+
         return ReconciliationResult(
             event=existing,
             action="unchanged",
             message=f"No deadline change detected for {existing.title}.",
         )
 
-    if incoming_is_newer and incoming_is_stronger:
-        for version in existing.history:
-            version.is_current = False
-
-        existing.history.append(
-            EventVersion(
-                due_at=candidate.due_at,
-                source_id=candidate.source_id,
-                reason=f"Updated by {candidate_source_type.value}.",
-                is_current=True,
-            )
-        )
-        existing.starts_at = candidate.starts_at or existing.starts_at
-        existing.due_at = candidate.due_at
-        existing.source_id = candidate.source_id
-        existing.source_excerpt = candidate.source_excerpt
-        existing.status = EventStatus.UPDATED
-        existing.needs_review_reason = None
-
+    if proposed.due_at is None or not has_timezone(proposed.due_at):
         return ReconciliationResult(
             event=existing,
-            action="updated",
-            message=f"Updated {existing.title} with a newer, higher-priority source.",
+            action="needs_review",
+            message=(
+                "The incoming deadline needs correction. "
+                + " ".join(reasons)
+                + " The saved event was not changed."
+            ),
+            proposed_candidate=proposed,
         )
 
-    existing.status = EventStatus.NEEDS_REVIEW
-    existing.needs_review_reason = (
-        "A source reports a different deadline, but DueScope cannot safely "
-        "determine which source should take precedence."
-    )
+    # Source priority explains a suggestion; it never applies it.
+    existing_source_type = source_types.get(existing.source_id)
+    incoming_priority = SOURCE_PRIORITY.get(candidate_source_type)
+    existing_priority = SOURCE_PRIORITY.get(existing_source_type)
+
+    if incoming_priority is None or existing_priority is None:
+        reasons.append("Source priority could not be fully determined.")
+    elif incoming_priority > existing_priority:
+        reasons.append("The incoming source has higher priority.")
+    elif incoming_priority == existing_priority:
+        reasons.append("The sources have equal priority.")
+    else:
+        reasons.append("The incoming source has lower priority.")
+
+    existing_source_time = source_received_at.get(existing.source_id)
+
+    if existing_source_time is None:
+        reasons.append("The existing source's received time is unknown.")
+    elif (
+        not has_timezone(candidate_received_at)
+        or not has_timezone(existing_source_time)
+    ):
+        reasons.append(
+            "Source timing cannot be compared because timezone "
+            "information is missing."
+        )
+    elif candidate_received_at > existing_source_time:
+        reasons.append("The incoming source was received more recently.")
+    elif candidate_received_at == existing_source_time:
+        reasons.append("Both sources have the same received time.")
+    else:
+        reasons.append("The incoming source was received earlier.")
 
     return ReconciliationResult(
         event=existing,
-        action="needs_review",
-        message=f"Marked {existing.title} for review because sources conflict.",
+        action="proposed_change",
+        message=(
+            f"A different deadline was found for {existing.title}. "
+            + " ".join(reasons)
+            + " Review the suggestion before accepting it. "
+            "The saved event was not changed."
+        ),
+        proposed_candidate=proposed,
     )
