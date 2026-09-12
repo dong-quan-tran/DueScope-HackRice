@@ -2,6 +2,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.demo import router as demo_router
+from app.api.events import router as events_router
 
 app = FastAPI(
     title="DueScope API",
@@ -18,6 +19,7 @@ app.add_middleware(
 )
 
 app.include_router(demo_router, prefix="/api")
+app.include_router(events_router, prefix="/api")
 
 
 @app.get("/health")
