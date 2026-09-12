@@ -1,6 +1,7 @@
 ﻿from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.calendar import router as calendar_router
 from app.api.demo import router as demo_router
 from app.api.events import router as events_router
 
@@ -20,6 +21,7 @@ app.add_middleware(
 
 app.include_router(demo_router, prefix="/api")
 app.include_router(events_router, prefix="/api")
+app.include_router(calendar_router, prefix="/api")
 
 
 @app.get("/health")

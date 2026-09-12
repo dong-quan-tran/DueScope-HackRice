@@ -16,6 +16,10 @@ class ReconcileRequest(BaseModel):
     source_received_at: datetime
 
 
+class ApprovalRequest(BaseModel):
+    approved: bool
+
+
 @router.get("")
 def list_events() -> list[AcademicEvent]:
     return [AcademicEvent.model_validate(event) for event in DEMO_WORKSPACE["events"]]
@@ -25,6 +29,22 @@ def list_events() -> list[AcademicEvent]:
 def get_event(event_id: str) -> AcademicEvent:
     for event in DEMO_WORKSPACE["events"]:
         if event["id"] == event_id:
+            return AcademicEvent.model_validate(event)
+
+    raise HTTPException(status_code=404, detail="Event not found")
+
+
+@router.patch("/{event_id}/approval")
+def set_event_approval(event_id: str, request: ApprovalRequest) -> AcademicEvent:
+    for event in DEMO_WORKSPACE["events"]:
+        if event["id"] == event_id:
+            if event["status"] not in {"verified", "updated"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Only verified or updated events can be approved.",
+                )
+
+            event["approved"] = request.approved
             return AcademicEvent.model_validate(event)
 
     raise HTTPException(status_code=404, detail="Event not found")
