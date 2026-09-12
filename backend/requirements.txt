@@ -4,3 +4,5 @@ pydantic==2.13.5
 python-dateutil==2.9.0.post0
 icalendar==7.3.0
 pytest==9.0.3
+google-genai
+python-dotenv
