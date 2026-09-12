@@ -5,7 +5,6 @@ from typing import Optional
 
 from app.schemas.events import (
     AcademicEvent,
-    ChangeType,
     EventCandidate,
     EventStatus,
     EventVersion,
@@ -30,9 +29,9 @@ class ReconciliationResult:
 
 def normalize_title(value: str) -> str:
     value = value.lower()
-    value = re.sub(r'[^a-z0-9\s]', ' ', value)
-    value = re.sub(r'\b(the|a|an|due|assignment)\b', ' ', value)
-    return ' '.join(value.split())
+    value = re.sub(r"[^a-z0-9\s]", " ", value)
+    value = re.sub(r"\b(the|a|an|due)\b", " ", value)
+    return " ".join(value.split())
 
 
 def find_matching_event(
@@ -50,6 +49,34 @@ def find_matching_event(
             return event
 
     return None
+
+
+def mark_for_review(
+    event: AcademicEvent,
+    reason: str,
+) -> ReconciliationResult:
+    event.status = EventStatus.NEEDS_REVIEW
+    event.needs_review_reason = reason
+
+    return ReconciliationResult(
+        event=event,
+        action="needs_review",
+        message=f"Marked {event.title} for review: {reason}",
+    )
+
+
+def ensure_current_history(event: AcademicEvent) -> None:
+    if any(version.is_current for version in event.history):
+        return
+
+    event.history.append(
+        EventVersion(
+            due_at=event.due_at,
+            source_id=event.source_id,
+            reason="Previous current deadline preserved before update.",
+            is_current=True,
+        )
+    )
 
 
 def reconcile_candidate(
@@ -90,12 +117,30 @@ def reconcile_candidate(
         )
         return ReconciliationResult(
             event=event,
-            action="created",
-            message=f"Created new event: {event.title}.",
+            action=(
+                "needs_review"
+                if candidate.needs_review_reason
+                else "created"
+            ),
+            message=(
+                f"Created {event.title}, but it needs review: "
+                f"{candidate.needs_review_reason}"
+                if candidate.needs_review_reason
+                else f"Created new event: {event.title}."
+            ),
         )
 
-    existing_source_type = source_types.get(existing.source_id, SourceType.MANUAL_ENTRY)
-    existing_source_time = source_received_at.get(existing.source_id, datetime.min)
+    if candidate.needs_review_reason:
+        return mark_for_review(existing, candidate.needs_review_reason)
+
+    existing_source_type = source_types.get(
+        existing.source_id,
+        SourceType.MANUAL_ENTRY,
+    )
+    existing_source_time = source_received_at.get(
+        existing.source_id,
+        datetime.min,
+    )
 
     incoming_priority = SOURCE_PRIORITY[candidate_source_type]
     existing_priority = SOURCE_PRIORITY[existing_source_type]
@@ -112,6 +157,8 @@ def reconcile_candidate(
         )
 
     if incoming_is_newer and incoming_is_stronger:
+        ensure_current_history(existing)
+
         for version in existing.history:
             version.is_current = False
 
@@ -133,17 +180,13 @@ def reconcile_candidate(
         return ReconciliationResult(
             event=existing,
             action="updated",
-            message=f"Updated {existing.title} with a newer, higher-priority source.",
+            message=f"Updated {existing.title} with a newer trusted source.",
         )
 
-    existing.status = EventStatus.NEEDS_REVIEW
-    existing.needs_review_reason = (
-        "A source reports a different deadline, but DueScope cannot safely "
-        "determine which source should take precedence."
-    )
-
-    return ReconciliationResult(
-        event=existing,
-        action="needs_review",
-        message=f"Marked {existing.title} for review because sources conflict.",
+    return mark_for_review(
+        existing,
+        (
+            "A source reports a different deadline, but DueScope cannot "
+            "safely determine which source should take precedence."
+        ),
     )
