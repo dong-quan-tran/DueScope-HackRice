@@ -1,150 +1,208 @@
-# DueScope
+﻿# DueScope
 
 DueScope is an evidence-backed academic deadline manager built for HackRice 16's Work & Productivity track.
 
-It turns course information from Canvas, instructor announcements, emails, syllabi, and pasted course updates into a single reviewable deadline workflow. DueScope preserves the source evidence behind every deadline, detects extensions and reschedules, highlights heavy workload days, and exports approved events to an ICS calendar file.
+Students receive deadlines through Canvas, announcements, emails, syllabi, and class messages. DueScope turns those sources into a reviewable deadline workflow: it extracts candidate deadlines, validates evidence and timezones, detects conflicts with saved events, and exports approved deadlines as a calendar file.
 
-## What it does
+## Core idea
 
-Students often receive deadlines through multiple places: Canvas assignments, announcement posts, instructor emails, syllabus PDFs, and class messages. When dates change, it is easy to miss the update or lose track of which source is authoritative.
+A source or AI model can suggest a deadline change, but it must never silently overwrite a student's saved calendar.
 
-DueScope helps by:
-
-- Importing official upcoming deadlines from Canvas
-- Scanning pasted course updates for deadline information
-- Reconciling new information against canonical events
-- Recording deadline history when a date changes
-- Flagging uncertain or conflicting information for review
-- Showing source evidence for every event
-- Requiring approval before a deadline is exported
-- Exporting approved events as an ICS calendar file
+DueScope uses a review-first workflow:
 
 ```text
-Canvas courses and course updates
-            |
-            v
-Source-backed deadline extraction
-            |
-            v
-Reconciliation and date-history preservation
-            |
-            v
-Review, approval, and workload awareness
-            |
-            v
-ICS calendar export
+Canvas import or pasted course update
+                |
+                v
+Structured AI deadline extraction
+                |
+                v
+Candidate validation
+- title is present
+- due_at is ISO-8601 and timezone-aware
+- source evidence appears in the original input
+                |
+                v
+Reconciliation with saved events
+                |
+                +-- New event: create canonical event
+                |
+                +-- Same date: leave event unchanged
+                |
+                +-- Different date: create a proposal
+                                      |
+                                      v
+                     User accepts or rejects the proposal
+                                      |
+                                      v
+                    Approve trusted events and export ICS
 ```
+
+When a user accepts a proposal, DueScope preserves the old deadline in history, applies the new source evidence and date, marks the event as `updated`, and resets calendar approval. A rejected proposal leaves the saved event unchanged.
 
 ## Current status
 
-DueScope currently includes a working full-stack MVP:
+DueScope is a working full-stack MVP with:
 
-- FastAPI backend with seeded workspace data and REST endpoints
-- Next.js and TypeScript frontend dashboard
-- Canvas course lookup and deadline import UI
-- Pasted course-update scanning workflow
-- Canonical academic events with source evidence and history
-- Deadline reconciliation for extensions, reschedules, and new events
-- Review and approval workflow for calendar export
-- Workload warning display for high-volume days
-- ICS calendar export for approved deadlines
-- Automated backend reconciliation tests
+- Next.js and TypeScript dashboard
+- FastAPI backend and REST API
+- Canvas course lookup and upcoming-deadline import
+- Local Ollama AI extraction using `gemma3:4b`
+- Optional Gemini integration when a funded Gemini project is available
+- Candidate validation for title, evidence, and timezone-aware dates
+- Reviewable deadline-change proposals
+- Explicit proposal accept and reject actions
+- Preserved event history after accepted changes
+- Approval-gated ICS calendar export
+- High-workload alert display
+- Automated validation and reconciliation tests
 
-The application currently uses in-memory demo storage. Restarting the backend resets seeded data, imported events, approvals, and reconciliation changes.
+The application currently uses in-memory demo storage. Restarting the backend resets seeded events, imported records, proposals, approvals, and accepted changes.
 
 ## Features
 
 ### Dashboard
 
-The frontend dashboard includes:
+The DueScope dashboard includes:
 
-- Upcoming deadline list sorted by due date
-- Status badges for verified, updated, needs-review, and canceled events
+- Upcoming deadlines sorted by due date
 - Course color indicators
-- Changes-to-review inbox
-- Event evidence panel
+- Status badges for `verified`, `updated`, `needs_review`, and `canceled`
+- Evidence panel for selected events
 - Deadline history timeline
+- Pending deadline-proposal review cards
+- Accept change and Keep saved date controls
 - Approval controls for exportable events
-- High-workload alert
+- High-workload warning
 - Canvas import controls
 - Course-update scanning form
-- ICS calendar export button
+- ICS calendar export
 
-### Canvas import
+### AI extraction
 
-DueScope can:
-
-1. Load available Canvas courses.
-2. Let the user choose a course.
-3. Import its upcoming assignment deadlines.
-4. Skip past deadlines.
-5. Refresh the workspace after import.
-
-Canvas API access requires the corresponding backend environment configuration.
-
-### Source scanning and reconciliation
-
-The course-update scanner accepts pasted text from sources such as:
+DueScope uses structured AI output to extract academic obligations from pasted:
 
 - Canvas announcements
 - Instructor emails
 - Syllabus excerpts
 - Other course notices
 
-The backend extracts deadline candidates, compares them with existing academic events, and then either:
+The default local provider is Ollama with `gemma3:4b`. Gemini can be used when configured with an API key tied to a project with usable Gemini credits.
 
-- Creates a new event
-- Updates an existing deadline
-- Preserves the prior deadline in event history
-- Marks uncertain information as `needs_review`
-- Records the relevant source evidence
-
-Example input:
+Example source text:
 
 ```text
 Programming Assignment 2 has been extended.
 It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.
 ```
 
+Expected outcome:
+
+```text
+Existing saved event: Programming Assignment 2, due Sept. 18
+Extracted candidate: Programming Assignment 2, due Sept. 21
+Result: proposed_change
+```
+
+The Sept. 18 event stays unchanged until the user accepts the proposal.
+
+### Candidate validation
+
+Before reconciliation, extracted candidates are checked for:
+
+- A nonblank title
+- A due date and time when one is required
+- A valid ISO-8601 timestamp
+- Timezone information in populated timestamps
+- A nonblank source excerpt
+- An exact source excerpt found in the original pasted source text
+
+Candidates with missing or unreliable information are marked for review. They are never automatically approved for calendar export.
+
+### Proposal review
+
+When an extracted or imported deadline conflicts with an existing saved event, DueScope shows:
+
+- The current saved deadline
+- The proposed deadline
+- The source evidence supporting the proposal
+- Source priority and recency reasoning
+- Accept change control
+- Keep saved date control
+
+Accepting a proposal:
+
+- Updates the canonical event
+- Saves the previous current deadline in history
+- Adds the accepted date as the current history version
+- Changes status to `updated`
+- Clears prior export approval
+
+Rejecting a proposal:
+
+- Keeps the canonical event unchanged
+- Resolves the proposal as `rejected`
+
+### Canvas import
+
+DueScope can:
+
+1. Load available Canvas courses.
+2. Let the user select a course.
+3. Import upcoming Canvas assignment deadlines.
+4. Skip past assignments by default.
+5. Create canonical events for new work.
+6. Create proposals instead of overwriting conflicting saved dates.
+
+Canvas access requires valid local Canvas configuration.
+
 ### Calendar export
 
-Only events that are both approved and marked `verified` or `updated` can be exported.
+Only events that are both:
 
-DueScope generates a standard `.ics` file that can be imported into calendar applications that support iCalendar files.
+- Approved by the user, and
+- Marked `verified` or `updated`
+
+can be exported.
+
+DueScope generates a standard `.ics` file that can be imported into compatible calendar applications.
 
 ## Tech stack
 
 | Area | Technology |
 |---|---|
 | Frontend | Next.js, React, TypeScript, Tailwind CSS |
-| UI icons | Lucide React |
+| Icons | Lucide React |
 | Backend | Python, FastAPI, Pydantic |
 | Testing | pytest |
 | Calendar export | icalendar |
-| Deadline extraction | Gemini-backed workflow when configured |
-| Canvas ingestion | Canvas REST API |
-| Development environment | Windows PowerShell, VS Code recommended |
+| Local AI extraction | Ollama with Gemma 3 |
+| Optional cloud AI | Google Gemini API |
+| Course ingestion | Canvas REST API |
+| Current storage | In-memory demo workspace |
 
 ## Prerequisites
 
-Install the following before running the project:
+Install:
 
 - Git
 - Python 3.11 or newer
 - Node.js 20 or newer
 - npm
+- Ollama
 - VS Code recommended
 
-Check installed versions:
+Check versions:
 
 ```powershell
 python --version
 node --version
 npm --version
 git --version
+ollama --version
 ```
 
-If Python is unavailable, install it from [python.org](https://www.python.org/downloads/). If Node.js is unavailable, install a current LTS release from [nodejs.org](https://nodejs.org/).
+Install Ollama from [ollama.com](https://ollama.com/) if it is not already available.
 
 ## Quick start
 
@@ -155,17 +213,9 @@ git clone [https://github.com/OWNER/DueScope.git](https://github.com/OWNER/DueSc
 cd DueScope
 ```
 
-Replace `OWNER` with the GitHub account or organization that owns the repository.
+Replace `OWNER` with the GitHub user or organization that owns the repository.
 
-If you already cloned the project:
-
-```powershell
-git pull origin main
-```
-
-### 2. Create the backend virtual environment
-
-From the repository root:
+### 2. Create and activate the Python environment
 
 ```powershell
 python -m venv backend\.venv
@@ -173,7 +223,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\backend\.venv\Scripts\Activate.ps1
 ```
 
-Your PowerShell prompt should begin with:
+Your prompt should show:
 
 ```text
 (.venv)
@@ -186,21 +236,7 @@ python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
 ```
 
-Optional dependency check:
-
-```powershell
-python -c "import fastapi, uvicorn, pydantic, dateutil, icalendar, pytest; print('Backend dependencies ready')"
-```
-
-Expected output:
-
-```text
-Backend dependencies ready
-```
-
 ### 4. Install frontend dependencies
-
-Open a second PowerShell terminal at the repository root:
 
 ```powershell
 cd frontend
@@ -212,7 +248,7 @@ Do not commit `frontend\node_modules`.
 
 ### 5. Configure environment variables
 
-Create a local environment file if the repository provides an example:
+Create a local `.env` file from the example if available:
 
 ```powershell
 Copy-Item .env.example .env
@@ -220,138 +256,176 @@ Copy-Item .env.example .env
 
 Do not commit `.env`.
 
-Depending on enabled integrations, your local configuration may include values such as:
+For local Ollama extraction, configure:
 
 ```text
-NEXT_PUBLIC_API_URL=http://127.0.0.1:8001
+EXTRACTION_PROVIDER=ollama
+OLLAMA_HOST=http://127.0.0.1:11434
+OLLAMA_MODEL=gemma3:4b
+```
+
+Download the recommended model if it is not already installed:
+
+```powershell
+ollama pull gemma3:4b
+```
+
+Optional Gemini configuration:
+
+```text
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.6-flash
+```
+
+Provider choices:
+
+```text
+EXTRACTION_PROVIDER=ollama
+EXTRACTION_PROVIDER=gemini
+EXTRACTION_PROVIDER=auto
+```
+
+Use `ollama` for the most reliable offline demo. Use `auto` only when Gemini has valid funded access; it tries Gemini first and falls back to Ollama if Gemini fails.
+
+Optional Canvas configuration:
+
+```text
 CANVAS_BASE_URL=
 CANVAS_ACCESS_TOKEN=
-GEMINI_API_KEY=
 ```
 
-Leave integration values blank if you want to use only the seeded demo workspace and do not have credentials configured.
+### 6. Start Ollama
 
-### 6. Run backend tests
-
-From the repository root with the backend environment activated:
+In a terminal, verify the model is available:
 
 ```powershell
-python -m pytest -v
+ollama list
 ```
 
-### 7. Start the backend API
-
-DueScope uses port `8001` in local development.
+If the Ollama service is not already running:
 
 ```powershell
-uvicorn app.main:app --reload --app-dir backend --host 127.0.0.1 --port 8001
+ollama serve
 ```
 
-Keep this terminal running.
+Keep Ollama running while using the AI scanner.
 
-API documentation is available at:
+### 7. Run backend tests
+
+From the repository root:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -m pytest -v
+```
+
+### 8. Start the backend
+
+DueScope uses port `8001` in local development:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --app-dir backend --host 127.0.0.1 --port 8001
+```
+
+API documentation:
 
 ```text
 http://127.0.0.1:8001/docs
 ```
 
-### 8. Start the frontend
+### 9. Start the frontend
 
-In another terminal:
+In a second terminal:
 
 ```powershell
 cd frontend
 npm run dev
 ```
 
-Open the local application:
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-The frontend expects the backend at:
+The frontend expects the API at:
 
 ```text
 http://127.0.0.1:8001
 ```
 
-To use a different backend URL, set `NEXT_PUBLIC_API_URL` in the frontend environment configuration and restart the frontend development server.
+To use a different backend URL, configure `NEXT_PUBLIC_API_URL` in the frontend environment file and restart the frontend server.
 
-## Using the app
+## Demo workflow
 
-### Import Canvas deadlines
+For the most reliable demo, start from a freshly restarted backend so the seeded workspace is restored.
 
-1. Start both the backend and frontend.
-2. Open `http://localhost:3000`.
-3. In **Import from Canvas**, select **Load Canvas courses**.
-4. Select a returned Canvas course.
-5. Choose **Import deadlines**.
-6. Review the imported events in **Upcoming deadlines**.
+1. Open `http://localhost:3000`.
+2. Select **Programming Assignment 2** and show its existing Sept. 18 deadline and source evidence.
+3. In **Scan a course update**, paste:
 
-If Canvas credentials are unavailable or invalid, the UI shows the backend error message instead of importing data.
+   ```text
+   Programming Assignment 2 has been extended.
+   It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.
+   ```
 
-### Scan a course update
+4. Select **Scan for deadlines**.
+5. Show the **Deadline proposals** card:
+   - saved deadline: Sept. 18
+   - proposed deadline: Sept. 21
+   - exact source evidence
+   - review rationale
+6. Select **Accept change**.
+7. Open Programming Assignment 2 again:
+   - due date is now Sept. 21
+   - event status is `updated`
+   - Sept. 18 appears in deadline history
+   - approval has reset
+8. Select **Approve for export**.
+9. Select **Export approved calendar** to download `duescope-calendar.ics`.
 
-1. In **Scan a course update**, select the relevant DueScope course.
-2. Choose the source type.
-3. Enter a source title.
-4. Paste an announcement, email, or syllabus text.
-5. Select **Scan for deadlines**.
-6. Review the resulting notice and the affected event in the evidence panel.
+To demonstrate rejection, scan a conflicting Sept. 22 source update and select **Keep saved date**. The Sept. 21 canonical deadline remains unchanged.
 
-### Review a deadline
-
-1. Select an event from **Upcoming deadlines** or **Changes to review**.
-2. Read the source evidence.
-3. Compare current and previous due dates in **Deadline history**.
-4. Review any `needs_review` reason.
-5. Approve trusted verified or updated events for export.
-
-### Export a calendar file
-
-1. Select an event.
-2. Choose **Approve for export** for events with `verified` or `updated` status.
-3. Select **Export approved calendar** in the page header.
-4. Import the downloaded `duescope-calendar.ics` file into a compatible calendar application.
-
-The generated ICS file is local output and should remain untracked by Git.
-
-## API quick reference
+## API reference
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/health` | Confirm that the API is running |
-| `GET` | `/api/demo/workspace` | Get courses, events, changes, and workload data |
-| `GET` | `/api/events` | List canonical deadline events |
-| `GET` | `/api/events/{event_id}` | Get one event with evidence and history |
+| `GET` | `/health` | Confirm the API is running |
+| `GET` | `/api/demo/workspace` | Get courses, events, changes, workload, and proposals |
+| `GET` | `/api/events` | List canonical events |
+| `GET` | `/api/events/{event_id}` | Get event details, evidence, and history |
 | `PATCH` | `/api/events/{event_id}/approval` | Approve or unapprove an exportable event |
-| `POST` | `/api/events/reconcile` | Create, update, or flag a deadline candidate |
-| `POST` | `/api/sources/extract-and-reconcile` | Scan pasted source text and reconcile results |
-| `GET` | `/api/canvas/courses` | Load available Canvas courses |
-| `POST` | `/api/canvas/import-course/{course_id}` | Import upcoming deadlines from one Canvas course |
-| `POST` | `/api/calendar/export` | Download approved events as an ICS calendar |
+| `POST` | `/api/events/reconcile` | Reconcile one supplied event candidate |
+| `GET` | `/api/events/proposals/pending` | List unresolved deadline proposals |
+| `POST` | `/api/events/proposals/{proposal_id}/accept` | Accept a proposal and update the canonical event |
+| `POST` | `/api/events/proposals/{proposal_id}/reject` | Reject a proposal and preserve the canonical event |
+| `POST` | `/api/sources/extract` | Extract deadline candidates from pasted text |
+| `POST` | `/api/sources/extract-and-reconcile` | Extract, validate, and reconcile pasted source text |
+| `GET` | `/api/canvas/profile` | Get Canvas profile information |
+| `GET` | `/api/canvas/courses` | Load Canvas courses |
+| `GET` | `/api/canvas/courses/{course_id}/assignments` | List Canvas assignments |
+| `POST` | `/api/canvas/import-course/{course_id}` | Import Canvas deadlines |
+| `POST` | `/api/calendar/export` | Export approved events as ICS |
 
-## API examples
+## Useful API checks
 
-### Confirm backend health
+### Backend health
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/health
 ```
 
-### View the workspace
+### Current workspace
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/api/demo/workspace |
-  ConvertTo-Json -Depth 10
+  ConvertTo-Json -Depth 20
 ```
 
-### List events
+### Pending proposals
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8001/api/events |
-  ConvertTo-Json -Depth 10
+Invoke-RestMethod http://127.0.0.1:8001/api/events/proposals/pending |
+  ConvertTo-Json -Depth 20
 ```
 
 ### Approve an event
@@ -361,20 +435,17 @@ $approval = @{ approved = $true } | ConvertTo-Json
 
 Invoke-RestMethod `
   -Method Patch `
-  -Uri "http://127.0.0.1:8001/api/events/event-quiz-2/approval" `
+  -Uri "http://127.0.0.1:8001/api/events/event-assignment-2/approval" `
   -ContentType "application/json" `
   -Body $approval |
-  ConvertTo-Json -Depth 10
+  ConvertTo-Json -Depth 20
 ```
 
 ### Export approved events
 
 ```powershell
 $exportBody = @{
-  event_ids = @(
-    "event-quiz-2",
-    "event-calculus-exam"
-  )
+  event_ids = @("event-assignment-2")
 } | ConvertTo-Json
 
 Invoke-WebRequest `
@@ -387,47 +458,10 @@ Invoke-WebRequest `
 Get-Content .\duescope-calendar.ics
 ```
 
-A successful ICS export begins with:
+A successful export begins with:
 
 ```text
 BEGIN:VCALENDAR
-```
-
-### Test reconciliation
-
-This example simulates a new announcement moving Quiz 2 to Friday, September 18, 2026:
-
-```powershell
-$body = @{
-  candidate = @{
-    course_id = "cse-3310"
-    type = "quiz"
-    title = "Quiz 2"
-    starts_at = "2026-09-18T08:00:00-05:00"
-    due_at = "2026-09-18T23:59:00-05:00"
-    source_id = "source-algorithms-announcement"
-    source_excerpt = "Quiz 2 has been moved again to Friday, September 18 at 11:59 PM."
-    change_type = "rescheduled"
-    confidence = "high"
-    needs_review_reason = $null
-  }
-  source_type = "instructor_announcement"
-  source_received_at = "2026-09-12T10:30:00-05:00"
-} | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:8001/api/events/reconcile" `
-  -ContentType "application/json" `
-  -Body $body |
-  ConvertTo-Json -Depth 10
-```
-
-Then inspect the event and its preserved history:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8001/api/events/event-quiz-2 |
-  ConvertTo-Json -Depth 10
 ```
 
 ## Project structure
@@ -443,12 +477,16 @@ DueScope/
 │   │   │   ├── events.py
 │   │   │   └── sources.py
 │   │   ├── schemas/
-│   │   │   └── events.py
+│   │   │   ├── events.py
+│   │   │   └── extraction.py
 │   │   ├── services/
-│   │   │   ├── extraction.py
+│   │   │   ├── canvas.py
+│   │   │   ├── deadline_validation.py
+│   │   │   ├── gemini_extraction.py
 │   │   │   └── reconciliation.py
 │   │   └── main.py
 │   ├── tests/
+│   │   ├── test_deadline_validation.py
 │   │   └── test_reconciliation.py
 │   └── requirements.txt
 ├── frontend/
@@ -459,8 +497,6 @@ DueScope/
 │   │       └── page.tsx
 │   ├── package.json
 │   └── next.config.ts
-├── docs/
-├── fixtures/
 ├── .env.example
 ├── .gitignore
 ├── BLUEPRINT.md
@@ -468,27 +504,15 @@ DueScope/
 └── README.md
 ```
 
-Some filenames may vary as the project evolves. Use the repository tree as the source of truth.
+## Development checks
 
-## Development workflow
-
-### Start a feature branch
-
-```powershell
-git switch main
-git pull origin main
-git switch -c feat/your-feature-name
-```
-
-### Validate changes
-
-Backend:
+Run backend tests:
 
 ```powershell
 .\backend\.venv\Scripts\python.exe -m pytest -v
 ```
 
-Frontend:
+Build the frontend:
 
 ```powershell
 cd frontend
@@ -496,54 +520,29 @@ npm run build
 cd ..
 ```
 
-Check your Git diff:
+Check changed files:
 
 ```powershell
 git diff --check
 git status
 ```
 
-### Commit and push
-
-```powershell
-git add <files>
-git commit -m "feat: concise description"
-git push -u origin feat/your-feature-name
-```
-
-Open a pull request into `main` after pushing your branch.
-
 ## Repository rules
 
-- Do not commit directly to `main`.
-- Use one focused branch per feature or fix.
-- Pull the latest `main` before beginning new work.
-- Do not commit `.env`, API keys, tokens, local databases, virtual environments, or generated calendar files.
+- Do not commit `.env`, API keys, Canvas tokens, local databases, virtual environments, or generated ICS files.
 - Do not commit `frontend\node_modules` or `frontend\.next`.
-- Keep pull requests focused and reviewable.
+- Save source and documentation files as UTF-8.
 - Run backend tests and the frontend production build before merging.
-- Use UTF-8 encoding when saving text files.
+- Use focused branches and review changes before merging to `main`.
 
 ## Current limitations
 
-- The backend uses in-memory storage, so application state resets when the API restarts.
-- Canvas functionality depends on valid local Canvas API configuration.
-- Gemini-backed extraction depends on valid local API configuration and is not guaranteed to be available in every development environment.
-- The application exports ICS files but does not directly synchronize with Google Calendar.
-- Gmail ingestion, persistent PostgreSQL or Tiger Data storage, ElevenLabs briefing generation, deployment, and custom-domain configuration remain future work.
-- The current interface is an MVP dashboard rather than a full week or month calendar planner.
-
-## Roadmap
-
-- Persistent database storage
-- Direct Google Calendar synchronization
-- Gmail ingestion
-- Improved Canvas synchronization and scheduled refreshes
-- Better conflict resolution and confidence explanations
-- Weekly and monthly calendar views
-- Workload forecasting and study-time recommendations
-- Daily spoken deadline briefings
-- Production deployment and custom domain
+- All application data is in memory and resets when the backend restarts.
+- Canvas import requires valid Canvas API configuration.
+- Ollama must be installed and running for local AI scanning.
+- Gemini is optional and requires a funded project with usable API credits.
+- ICS export is supported, but direct Google Calendar sync is not implemented.
+- Gmail ingestion, persistent storage, scheduled sync, workload forecasting, deployment, and a custom domain are future work.
 
 ## Team
 
