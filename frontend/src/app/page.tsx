@@ -218,6 +218,15 @@ type JobProposalApprovalResponse = {
   };
 };
 
+type DeadlineFilter = "7" | "14" | "30" | "all";
+
+const DEADLINE_FILTERS: Array<{ value: DeadlineFilter; label: string }> = [
+  { value: "7", label: "Next 7 days" },
+  { value: "14", label: "Next 14 days" },
+  { value: "30", label: "Next 30 days" },
+  { value: "all", label: "All semester" },
+];
+
 const JOB_STATUSES: JobStatus[] = [
   "application_received",
   "online_assessment",
@@ -336,6 +345,10 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [canvasCourses, setCanvasCourses] = useState<CanvasCourse[]>([]);
   const [canvasCourseId, setCanvasCourseId] = useState("");
+  const [canvasFocusCourseId, setCanvasFocusCourseId] = useState<string | null>(
+    null,
+  );
+  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("14");
   const [canvasLoading, setCanvasLoading] = useState(false);
   const [canvasImporting, setCanvasImporting] = useState(false);
   const [resolvingProposalId, setResolvingProposalId] = useState("");
@@ -398,7 +411,6 @@ export default function Home() {
 
       setSelectedEvent((current) => {
         if (!current) return null;
-
         return data.events.find((event) => event.id === current.id) ?? null;
       });
     } catch (error) {
@@ -455,8 +467,7 @@ export default function Home() {
         throw new Error("Could not load job applications.");
       }
 
-      const data = (await response.json()) as JobApplication[];
-      setJobs(data);
+      setJobs((await response.json()) as JobApplication[]);
     } catch (error) {
       if (showLoading) {
         setNotice(
@@ -486,8 +497,7 @@ export default function Home() {
         throw new Error("Could not load job reminder proposals.");
       }
 
-      const data = (await response.json()) as JobCalendarProposal[];
-      setJobCalendarProposals(data);
+      setJobCalendarProposals((await response.json()) as JobCalendarProposal[]);
     } catch (error) {
       if (showLoading) {
         setNotice(
@@ -569,15 +579,18 @@ export default function Home() {
             (item: { proposal_id?: string | null }) => item.proposal_id,
           ).length
         : 0;
+      const importMessage = data.message
+        ? `${data.message} `
+        : `Processed ${data.imported_count} upcoming Canvas deadline(s). `;
+      const pastMessage = data.skipped_past_count
+        ? `${data.skipped_past_count} past deadline(s) skipped. `
+        : "";
+      const proposalMessage = proposalCount
+        ? `${proposalCount} change proposal(s) need review.`
+        : "";
 
-      setNotice(
-        `Processed ${data.imported_count} upcoming Canvas deadline(s). ` +
-          `${data.skipped_past_count} past deadline(s) skipped.` +
-          (proposalCount
-            ? ` ${proposalCount} change proposal(s) need review.`
-            : ""),
-      );
-
+      setCanvasFocusCourseId(`canvas-${canvasCourseId}`);
+      setNotice(`${importMessage}${pastMessage}${proposalMessage}`.trim());
       await loadWorkspace(false);
     } catch (error) {
       setNotice(
@@ -615,7 +628,6 @@ export default function Home() {
           }),
         },
       );
-
       const data = (await response.json()) as ExtractionResult | { detail?: string };
 
       if (!response.ok) {
@@ -634,7 +646,6 @@ export default function Home() {
               .join(" - ")}${provider}`
           : `No deadlines found in this source${provider}.`,
       );
-
       await loadWorkspace(false);
     } catch (error) {
       setNotice(
@@ -666,18 +677,13 @@ export default function Home() {
         );
       }
 
-      if (action === "accept") {
-        setNotice(
-          `${proposal.candidate.title} updated to ${formatDate(
-            proposal.candidate.due_at,
-          )}. Calendar approval was reset because the deadline changed.`,
-        );
-      } else {
-        setNotice(
-          `Kept the saved deadline for ${proposal.candidate.title}.`,
-        );
-      }
-
+      setNotice(
+        action === "accept"
+          ? `${proposal.candidate.title} updated to ${formatDate(
+              proposal.candidate.due_at,
+            )}. Calendar approval was reset because the deadline changed.`
+          : `Kept the saved deadline for ${proposal.candidate.title}.`,
+      );
       await loadWorkspace(false);
     } catch (error) {
       setNotice(
@@ -697,7 +703,6 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approved: !event.approved }),
       });
-
       const data = await response.json();
 
       if (!response.ok) {
@@ -705,7 +710,6 @@ export default function Home() {
       }
 
       await loadWorkspace(false);
-
       setNotice(
         `${event.title} ${
           event.approved ? "removed from" : "approved for"
@@ -746,7 +750,6 @@ export default function Home() {
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-
       anchor.href = url;
       anchor.download = "duescope-calendar.ics";
       document.body.appendChild(anchor);
@@ -798,7 +801,6 @@ export default function Home() {
           }),
         },
       );
-
       const data = (await response.json()) as GoogleSyncResult | { detail?: string };
 
       if (!response.ok) {
@@ -809,7 +811,6 @@ export default function Home() {
 
       const result = data as GoogleSyncResult;
       setSyncResult(result);
-
       const resultMessage = [
         result.created.length ? `${result.created.length} created` : "",
         result.updated.length ? `${result.updated.length} updated` : "",
@@ -1073,7 +1074,27 @@ export default function Home() {
     );
   }
 
-  const events = workspace?.events ?? [];
+  const allEvents = workspace?.events ?? [];
+  const events = allEvents.filter(
+    (event) =>
+      canvasFocusCourseId === null || event.course_id === canvasFocusCourseId,
+  );
+  const selectedFilter =
+    DEADLINE_FILTERS.find((filter) => filter.value === deadlineFilter) ??
+    DEADLINE_FILTERS[1];
+  const displayedEvents = events.filter((event) => {
+    if (!event.due_at) return false;
+
+    const dueAt = new Date(event.due_at);
+    if (Number.isNaN(dueAt.getTime())) return false;
+    if (deadlineFilter === "all") return true;
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + Number(deadlineFilter));
+
+    return dueAt >= now && dueAt <= end;
+  });
   const proposals = (workspace?.proposals ?? []).filter(
     (proposal) => !proposal.resolved,
   );
@@ -1088,11 +1109,9 @@ export default function Home() {
               <Sparkles size={16} />
               HackRice 16 - Work &amp; Productivity
             </div>
-
             <h1 className="text-4xl font-black tracking-tight sm:text-5xl">
               DueScope
             </h1>
-
             <p className="mt-3 max-w-2xl text-slate-400">
               A source-backed academic calendar that detects deadline changes
               before they become missed work.
@@ -1150,12 +1169,9 @@ export default function Home() {
             <div className="flex gap-3">
               <AlertTriangle className="mt-0.5 shrink-0 text-amber-300" />
               <div>
-                <p className="font-bold text-amber-200">
-                  High workload detected
-                </p>
+                <p className="font-bold text-amber-200">High workload detected</p>
                 <p className="mt-1 text-sm text-amber-100/80">
-                  {highWorkload.date}: {highWorkload.minutes} estimated minutes.{" "}
-                  {highWorkload.reason}
+                  {highWorkload.date}: {highWorkload.minutes} estimated minutes. {highWorkload.reason}
                 </p>
               </div>
             </div>
@@ -1169,11 +1185,9 @@ export default function Home() {
                 <div>
                   <h2 className="text-xl font-bold">Upcoming deadlines</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Click an event to inspect its evidence, history, and export
-                    approval.
+                    {selectedFilter.label} - {displayedEvents.length} displayed deadline{displayedEvents.length === 1 ? "" : "s"}
                   </p>
                 </div>
-
                 <button
                   onClick={() => void loadWorkspace(false)}
                   className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-cyan-400 hover:text-cyan-300"
@@ -1184,15 +1198,42 @@ export default function Home() {
                 </button>
               </div>
 
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <label htmlFor="deadline-filter" className="text-sm font-semibold text-slate-300">
+                  Show deadlines
+                </label>
+                <select
+                  id="deadline-filter"
+                  value={deadlineFilter}
+                  onChange={(event) => setDeadlineFilter(event.target.value as DeadlineFilter)}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
+                >
+                  {DEADLINE_FILTERS.map((filter) => (
+                    <option key={filter.value} value={filter.value}>
+                      {filter.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {canvasFocusCourseId && (
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-sm text-cyan-100">
+                  <span>Showing deadlines imported from the selected Canvas course.</span>
+                  <button
+                    onClick={() => setCanvasFocusCourseId(null)}
+                    className="rounded-lg border border-cyan-300/40 px-2 py-1 text-xs font-semibold transition hover:bg-cyan-300 hover:text-slate-950"
+                  >
+                    Show all courses
+                  </button>
+                </div>
+              )}
+
               <div className="space-y-3">
-                {events
+                {displayedEvents
                   .slice()
-                  .sort((a, b) =>
-                    (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"),
-                  )
+                  .sort((a, b) => (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"))
                   .map((event) => {
                     const course = coursesById[event.course_id];
-
                     return (
                       <button
                         key={event.id}
@@ -1201,19 +1242,12 @@ export default function Home() {
                       >
                         <span
                           className="h-11 w-1.5 rounded-full"
-                          style={{
-                            backgroundColor: course?.color ?? "#64748b",
-                          }}
+                          style={{ backgroundColor: course?.color ?? "#64748b" }}
                         />
-
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="truncate font-bold">{event.title}</p>
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusStyle(
-                                event.status,
-                              )}`}
-                            >
+                            <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusStyle(event.status)}`}>
                               {actionLabel(event.status)}
                             </span>
                             {event.approved && (
@@ -1222,25 +1256,18 @@ export default function Home() {
                               </span>
                             )}
                           </div>
-
                           <p className="mt-1 text-sm text-slate-400">
-                            {course?.code ?? event.course_id} -{" "}
-                            {formatDate(event.due_at)}
+                            {course?.code ?? event.course_id} - {formatDate(event.due_at)}
                           </p>
                         </div>
-
-                        <ChevronRight
-                          className="shrink-0 text-slate-500"
-                          size={20}
-                        />
+                        <ChevronRight className="shrink-0 text-slate-500" size={20} />
                       </button>
                     );
                   })}
 
-                {events.length === 0 && (
+                {displayedEvents.length === 0 && (
                   <div className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
-                    No deadlines yet. Import Canvas assignments or scan a course
-                    update to get started.
+                    No deadlines due {deadlineFilter === "all" ? "in this semester" : `in the next ${deadlineFilter} days`}.
                   </div>
                 )}
               </div>
@@ -1251,23 +1278,17 @@ export default function Home() {
                 <CalendarDays className="text-cyan-300" size={20} />
                 <div>
                   <h2 className="text-xl font-bold">Import from Canvas</h2>
-                  <p className="text-sm text-slate-400">
-                    Pull official upcoming assignment due dates from Canvas.
-                  </p>
+                  <p className="text-sm text-slate-400">Pull official upcoming assignment due dates from Canvas.</p>
                 </div>
               </div>
 
               {canvasCourses.length === 0 ? (
                 <button
-                  onClick={loadCanvasCourses}
+                  onClick={() => void loadCanvasCourses()}
                   disabled={canvasLoading}
                   className="inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {canvasLoading ? (
-                    <Loader2 size={18} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={18} />
-                  )}
+                  {canvasLoading ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
                   {canvasLoading ? "Loading Canvas..." : "Load Canvas courses"}
                 </button>
               ) : (
@@ -1280,23 +1301,16 @@ export default function Home() {
                   >
                     {canvasCourses.map((course) => (
                       <option key={course.id} value={course.id}>
-                        {course.course_code
-                          ? `${course.course_code} - ${course.name}`
-                          : course.name}
+                        {course.course_code ? `${course.course_code} - ${course.name}` : course.name}
                       </option>
                     ))}
                   </select>
-
                   <button
-                    onClick={importCanvasCourse}
+                    onClick={() => void importCanvasCourse()}
                     disabled={canvasImporting}
                     className="inline-flex items-center justify-center gap-2 rounded-lg border border-cyan-400/60 px-4 py-2.5 font-bold text-cyan-200 transition hover:bg-cyan-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {canvasImporting ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <CalendarDays size={18} />
-                    )}
+                    {canvasImporting ? <Loader2 size={18} className="animate-spin" /> : <CalendarDays size={18} />}
                     {canvasImporting ? "Importing..." : "Import deadlines"}
                   </button>
                 </div>
@@ -1308,9 +1322,7 @@ export default function Home() {
                 <FileText className="text-cyan-300" size={20} />
                 <div>
                   <h2 className="text-xl font-bold">Scan a course update</h2>
-                  <p className="text-sm text-slate-400">
-                    Paste an announcement, email, or syllabus excerpt.
-                  </p>
+                  <p className="text-sm text-slate-400">Paste an announcement, email, or syllabus excerpt.</p>
                 </div>
               </div>
 
@@ -1327,16 +1339,13 @@ export default function Home() {
                     </option>
                   ))}
                 </select>
-
                 <select
                   value={sourceType}
                   onChange={(event) => setSourceType(event.target.value)}
                   className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm outline-none focus:border-cyan-400"
                   aria-label="Source type"
                 >
-                  <option value="instructor_announcement">
-                    Canvas announcement
-                  </option>
+                  <option value="instructor_announcement">Canvas announcement</option>
                   <option value="instructor_email">Instructor email</option>
                   <option value="syllabus">Syllabus</option>
                   <option value="other">Other course source</option>
@@ -1350,7 +1359,6 @@ export default function Home() {
                 placeholder="Source title"
                 aria-label="Source title"
               />
-
               <textarea
                 value={sourceText}
                 onChange={(event) => setSourceText(event.target.value)}
@@ -1358,17 +1366,12 @@ export default function Home() {
                 placeholder="Paste a course announcement, email, or syllabus excerpt..."
                 aria-label="Course source text"
               />
-
               <button
-                onClick={scanSource}
+                onClick={() => void scanSource()}
                 disabled={scanning || !sourceText.trim()}
                 className="mt-3 inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {scanning ? (
-                  <Loader2 size={18} className="animate-spin" />
-                ) : (
-                  <Sparkles size={18} />
-                )}
+                {scanning ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
                 {scanning ? "Scanning course update..." : "Scan for deadlines"}
               </button>
             </section>
@@ -1380,9 +1383,7 @@ export default function Home() {
                   <div>
                     <h2 className="text-xl font-bold">Job applications</h2>
                     <p className="mt-1 max-w-2xl text-sm text-slate-400">
-                      Scan Gmail read-only for recruiting-system emails. DueScope
-                      keeps the original source email and marks inferred statuses
-                      for review.
+                      Scan Gmail read-only for recruiting-system emails. DueScope keeps the original source email and marks inferred statuses for review.
                     </p>
                   </div>
                 </div>
@@ -1395,22 +1396,14 @@ export default function Home() {
                     title="Refresh job applications"
                     aria-label="Refresh job applications"
                   >
-                    <RefreshCw
-                      size={17}
-                      className={jobsLoading ? "animate-spin" : ""}
-                    />
+                    <RefreshCw size={17} className={jobsLoading ? "animate-spin" : ""} />
                   </button>
-
                   <button
                     onClick={() => void scanJobEmails()}
                     disabled={scanningJobs}
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {scanningJobs ? (
-                      <Loader2 size={18} className="animate-spin" />
-                    ) : (
-                      <BriefcaseBusiness size={18} />
-                    )}
+                    {scanningJobs ? <Loader2 size={18} className="animate-spin" /> : <BriefcaseBusiness size={18} />}
                     {scanningJobs ? "Scanning Gmail..." : "Scan for new job updates"}
                   </button>
                 </div>
@@ -1420,20 +1413,13 @@ export default function Home() {
                 <div className="mt-4 rounded-xl border border-violet-400/30 bg-slate-950/70 p-4 text-sm">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="font-semibold text-violet-200">
-                      Latest scan: {jobScanResult.matched_count} matching email
-                      {jobScanResult.matched_count === 1 ? "" : "s"}
+                      Latest scan: {jobScanResult.matched_count} matching email{jobScanResult.matched_count === 1 ? "" : "s"}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {jobScanResult.created.length} created ·{" "}
-                      {jobScanResult.updated.length} updated ·{" "}
-                      {jobScanResult.calendar_proposals?.length ?? 0} reminders ·{" "}
-                      {jobScanResult.skipped.length} skipped ·{" "}
-                      {jobScanResult.errors.length} errors
+                      {jobScanResult.created.length} created · {jobScanResult.updated.length} updated · {jobScanResult.calendar_proposals?.length ?? 0} reminders · {jobScanResult.skipped.length} skipped · {jobScanResult.errors.length} errors
                     </p>
                   </div>
-                  <p className="mt-2 text-xs leading-5 text-slate-400">
-                    {jobScanResult.safety_note}
-                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">{jobScanResult.safety_note}</p>
                 </div>
               )}
 
@@ -1445,8 +1431,7 @@ export default function Home() {
                   </div>
                 ) : jobs.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
-                    No job applications are tracked yet. Scan job emails to find
-                    messages from supported recruiting systems.
+                    No job applications are tracked yet. Scan job emails to find messages from supported recruiting systems.
                   </div>
                 ) : (
                   uniqueJobs(jobs).map((job) => {
@@ -1454,10 +1439,7 @@ export default function Home() {
                     const saving = savingJobId === job.id;
 
                     return (
-                      <article
-                        key={job.id}
-                        className="rounded-xl border border-slate-700 bg-slate-950/70 p-4"
-                      >
+                      <article key={job.id} className="rounded-xl border border-slate-700 bg-slate-950/70 p-4">
                         {editing ? (
                           <div className="space-y-3">
                             <div className="grid gap-3 sm:grid-cols-2">
@@ -1465,79 +1447,48 @@ export default function Home() {
                                 Company
                                 <input
                                   value={jobDraft.company ?? ""}
-                                  onChange={(event) =>
-                                    setJobDraft((current) => ({
-                                      ...current,
-                                      company: event.target.value,
-                                    }))
-                                  }
+                                  onChange={(event) => setJobDraft((current) => ({ ...current, company: event.target.value }))}
                                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
                                 />
                               </label>
-
                               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                                 Role
                                 <input
                                   value={jobDraft.role ?? ""}
-                                  onChange={(event) =>
-                                    setJobDraft((current) => ({
-                                      ...current,
-                                      role: event.target.value,
-                                    }))
-                                  }
+                                  onChange={(event) => setJobDraft((current) => ({ ...current, role: event.target.value }))}
                                   className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
                                 />
                               </label>
                             </div>
-
                             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Status
                               <select
                                 value={jobDraft.status ?? job.status}
-                                onChange={(event) =>
-                                  setJobDraft((current) => ({
-                                    ...current,
-                                    status: event.target.value as JobStatus,
-                                  }))
-                                }
+                                onChange={(event) => setJobDraft((current) => ({ ...current, status: event.target.value as JobStatus }))}
                                 className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
                               >
                                 {JOB_STATUSES.map((status) => (
-                                  <option key={status} value={status}>
-                                    {actionLabel(status)}
-                                  </option>
+                                  <option key={status} value={status}>{actionLabel(status)}</option>
                                 ))}
                               </select>
                             </label>
-
                             <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
                               Next action
                               <input
                                 value={jobDraft.next_action ?? ""}
-                                onChange={(event) =>
-                                  setJobDraft((current) => ({
-                                    ...current,
-                                    next_action: event.target.value,
-                                  }))
-                                }
+                                onChange={(event) => setJobDraft((current) => ({ ...current, next_action: event.target.value }))}
                                 className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
                               />
                             </label>
-
                             <div className="grid gap-2 sm:grid-cols-2">
                               <button
                                 onClick={() => void saveJob(job)}
                                 disabled={saving}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {saving ? (
-                                  <Loader2 size={16} className="animate-spin" />
-                                ) : (
-                                  <Check size={16} />
-                                )}
+                                {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                                 Save review
                               </button>
-
                               <button
                                 onClick={cancelEditJob}
                                 disabled={saving}
@@ -1553,14 +1504,8 @@ export default function Home() {
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="font-bold text-slate-100">
-                                    {job.company}
-                                  </h3>
-                                  <span
-                                    className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobStatusStyle(
-                                      job.status,
-                                    )}`}
-                                  >
+                                  <h3 className="font-bold text-slate-100">{job.company}</h3>
+                                  <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobStatusStyle(job.status)}`}>
                                     {actionLabel(job.status)}
                                   </span>
                                   {job.requires_review && (
@@ -1569,11 +1514,8 @@ export default function Home() {
                                     </span>
                                   )}
                                 </div>
-                                <p className="mt-1 text-sm text-violet-200">
-                                  {job.role}
-                                </p>
+                                <p className="mt-1 text-sm text-violet-200">{job.role}</p>
                               </div>
-
                               <button
                                 onClick={() => beginEditJob(job)}
                                 className="inline-flex items-center justify-center gap-2 rounded-lg border border-violet-400/50 px-3 py-2 text-sm font-bold text-violet-200 transition hover:bg-violet-400 hover:text-slate-950"
@@ -1582,28 +1524,13 @@ export default function Home() {
                                 Review
                               </button>
                             </div>
-
                             <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-                              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                                Next action
-                              </p>
-                              <p className="mt-1 text-sm text-slate-300">
-                                {job.next_action}
-                              </p>
+                              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Next action</p>
+                              <p className="mt-1 text-sm text-slate-300">{job.next_action}</p>
                             </div>
-
-                            <p className="mt-3 text-xs text-slate-500">
-                              Latest source: {formatDate(job.received_at)} ·{" "}
-                              {job.source_sender}
-                            </p>
-                            <p className="mt-1 text-sm text-slate-400">
-                              {job.source_subject}
-                            </p>
-
-                            <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-500">
-                              {job.source_excerpt}
-                            </p>
-
+                            <p className="mt-3 text-xs text-slate-500">Latest source: {formatDate(job.received_at)} · {job.source_sender}</p>
+                            <p className="mt-1 text-sm text-slate-400">{job.source_subject}</p>
+                            <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-500">{job.source_excerpt}</p>
                             <div className="mt-4 flex flex-wrap items-center gap-3">
                               <a
                                 href={job.gmail_url}
@@ -1614,10 +1541,7 @@ export default function Home() {
                                 Open source email
                                 <ExternalLink size={15} />
                               </a>
-
-                              <span className="text-xs text-slate-600">
-                                Updated {formatDate(job.updated_at)}
-                              </span>
+                              <span className="text-xs text-slate-600">Updated {formatDate(job.updated_at)}</span>
                             </div>
                           </>
                         )}
@@ -1637,9 +1561,7 @@ export default function Home() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="text-xl font-bold">Google Calendar</h2>
-                      <p className="mt-1 text-sm text-slate-400">
-                        Sync only deadlines you explicitly approve.
-                      </p>
+                      <p className="mt-1 text-sm text-slate-400">Sync only deadlines you explicitly approve.</p>
                     </div>
                     <button
                       onClick={() => void loadGoogleStatus(true)}
@@ -1648,46 +1570,23 @@ export default function Home() {
                       title="Refresh Google Calendar status"
                       aria-label="Refresh Google Calendar status"
                     >
-                      <RefreshCw
-                        size={16}
-                        className={googleStatusLoading ? "animate-spin" : ""}
-                      />
+                      <RefreshCw size={16} className={googleStatusLoading ? "animate-spin" : ""} />
                     </button>
                   </div>
-
                   <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Connection status
-                    </p>
-                    <p
-                      className={`mt-1 text-sm font-semibold ${
-                        googleConnected ? "text-emerald-300" : "text-amber-300"
-                      }`}
-                    >
-                      {googleStatusLoading
-                        ? "Checking connection..."
-                        : googleConnected
-                          ? "Connected to Google Calendar"
-                          : "Not connected"}
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Connection status</p>
+                    <p className={`mt-1 text-sm font-semibold ${googleConnected ? "text-emerald-300" : "text-amber-300"}`}>
+                      {googleStatusLoading ? "Checking connection..." : googleConnected ? "Connected to Google Calendar" : "Not connected"}
                     </p>
                   </div>
-
                   {googleConnected ? (
                     <button
                       onClick={() => void syncApprovedToGoogle()}
                       disabled={syncingGoogle || approvedSyncableEvents.length === 0}
                       className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {syncingGoogle ? (
-                        <Loader2 size={18} className="animate-spin" />
-                      ) : (
-                        <CalendarCheck2 size={18} />
-                      )}
-                      {syncingGoogle
-                        ? "Syncing approved deadlines..."
-                        : `Sync ${approvedSyncableEvents.length} approved deadline${
-                            approvedSyncableEvents.length === 1 ? "" : "s"
-                          }`}
+                      {syncingGoogle ? <Loader2 size={18} className="animate-spin" /> : <CalendarCheck2 size={18} />}
+                      {syncingGoogle ? "Syncing approved deadlines..." : `Sync ${approvedSyncableEvents.length} approved deadline${approvedSyncableEvents.length === 1 ? "" : "s"}`}
                     </button>
                   ) : (
                     <button
@@ -1698,76 +1597,41 @@ export default function Home() {
                       Connect Google Calendar
                     </button>
                   )}
-
                   {googleConnected && approvedSyncableEvents.length === 0 && (
-                    <p className="mt-3 text-sm text-slate-500">
-                      Approve a verified or updated deadline to enable sync.
-                    </p>
+                    <p className="mt-3 text-sm text-slate-500">Approve a verified or updated deadline to enable sync.</p>
                   )}
-
                   {syncResult && (
                     <div className="mt-4 space-y-3">
                       {syncResult.created.length > 0 && (
                         <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                          <p className="font-bold">
-                            Created: {syncItemSummary(syncResult.created)}
-                          </p>
-                          {syncResult.created.map((item) =>
-                            item.calendar_url ? (
-                              <a
-                                key={item.event_id}
-                                href={item.calendar_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-1 block text-xs text-emerald-200 underline underline-offset-2"
-                              >
-                                Open {item.title} in Google Calendar
-                              </a>
-                            ) : null,
-                          )}
+                          <p className="font-bold">Created: {syncItemSummary(syncResult.created)}</p>
+                          {syncResult.created.map((item) => item.calendar_url ? (
+                            <a key={item.event_id} href={item.calendar_url} target="_blank" rel="noreferrer" className="mt-1 block text-xs text-emerald-200 underline underline-offset-2">
+                              Open {item.title} in Google Calendar
+                            </a>
+                          ) : null)}
                         </div>
                       )}
-
                       {syncResult.updated.length > 0 && (
                         <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-3 text-sm text-cyan-100">
-                          <p className="font-bold">
-                            Updated: {syncItemSummary(syncResult.updated)}
-                          </p>
-                          {syncResult.updated.map((item) =>
-                            item.calendar_url ? (
-                              <a
-                                key={item.event_id}
-                                href={item.calendar_url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="mt-1 block text-xs text-cyan-200 underline underline-offset-2"
-                              >
-                                Open {item.title} in Google Calendar
-                              </a>
-                            ) : null,
-                          )}
+                          <p className="font-bold">Updated: {syncItemSummary(syncResult.updated)}</p>
+                          {syncResult.updated.map((item) => item.calendar_url ? (
+                            <a key={item.event_id} href={item.calendar_url} target="_blank" rel="noreferrer" className="mt-1 block text-xs text-cyan-200 underline underline-offset-2">
+                              Open {item.title} in Google Calendar
+                            </a>
+                          ) : null)}
                         </div>
                       )}
-
                       {syncResult.skipped.length > 0 && (
                         <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
                           <p className="font-bold">Skipped deadlines</p>
-                          {syncResult.skipped.map((item) => (
-                            <p key={item.event_id} className="mt-1 text-xs">
-                              {item.title}: {item.reason ?? "Not eligible for sync."}
-                            </p>
-                          ))}
+                          {syncResult.skipped.map((item) => <p key={item.event_id} className="mt-1 text-xs">{item.title}: {item.reason ?? "Not eligible for sync."}</p>)}
                         </div>
                       )}
-
                       {syncResult.failed.length > 0 && (
                         <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">
                           <p className="font-bold">Sync errors</p>
-                          {syncResult.failed.map((item) => (
-                            <p key={item.event_id} className="mt-1 text-xs">
-                              {item.title}: {item.reason ?? "Unknown sync error."}
-                            </p>
-                          ))}
+                          {syncResult.failed.map((item) => <p key={item.event_id} className="mt-1 text-xs">{item.title}: {item.reason ?? "Unknown sync error."}</p>)}
                         </div>
                       )}
                     </div>
@@ -1783,8 +1647,7 @@ export default function Home() {
                   <div>
                     <h2 className="text-xl font-bold">Job reminders to review</h2>
                     <p className="mt-1 text-sm text-slate-400">
-                      Gmail creates reminders only from explicit dates. Approving
-                      a proposal is the only action that changes Google Calendar.
+                      Gmail creates reminders only from explicit dates. Approving a proposal is the only action that changes Google Calendar.
                     </p>
                   </div>
                 </div>
@@ -1795,10 +1658,7 @@ export default function Home() {
                   title="Refresh job reminder proposals"
                   aria-label="Refresh job reminder proposals"
                 >
-                  <RefreshCw
-                    size={16}
-                    className={jobProposalsLoading ? "animate-spin" : ""}
-                  />
+                  <RefreshCw size={16} className={jobProposalsLoading ? "animate-spin" : ""} />
                 </button>
               </div>
 
@@ -1810,93 +1670,50 @@ export default function Home() {
                   </div>
                 ) : pendingJobCalendarProposals.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
-                    No pending job reminders. Scan job emails to detect explicit
-                    assessment deadlines or interview scheduling deadlines.
+                    No pending job reminders. Scan job emails to detect explicit assessment deadlines or interview scheduling deadlines.
                   </div>
                 ) : (
                   pendingJobCalendarProposals.map((proposal) => {
                     const resolving = resolvingJobProposalId === proposal.id;
-
                     return (
-                      <article
-                        key={proposal.id}
-                        className="rounded-xl border border-violet-400/30 bg-slate-950/70 p-4"
-                      >
+                      <article key={proposal.id} className="rounded-xl border border-violet-400/30 bg-slate-950/70 p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <p className="font-semibold text-violet-100">
-                              {proposal.title}
-                            </p>
-                            <p className="mt-1 text-sm text-violet-200">
-                              {proposal.company} · {proposal.role}
-                            </p>
+                            <p className="font-semibold text-violet-100">{proposal.title}</p>
+                            <p className="mt-1 text-sm text-violet-200">{proposal.company} · {proposal.role}</p>
                           </div>
-                          <span
-                            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(
-                              proposal.kind,
-                            )}`}
-                          >
+                          <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(proposal.kind)}`}>
                             {actionLabel(proposal.kind)}
                           </span>
                         </div>
-
                         <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                           <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                              Starts
-                            </p>
-                            <p className="mt-1 text-slate-200">
-                              {formatDate(proposal.starts_at)}
-                            </p>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Starts</p>
+                            <p className="mt-1 text-slate-200">{formatDate(proposal.starts_at)}</p>
                           </div>
                           <div className="rounded-lg border border-violet-400/30 bg-violet-400/10 p-3">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-violet-300">
-                              Deadline or event end
-                            </p>
-                            <p className="mt-1 text-violet-100">
-                              {formatDate(proposal.ends_at)}
-                            </p>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-violet-300">Deadline or event end</p>
+                            <p className="mt-1 text-violet-100">{formatDate(proposal.ends_at)}</p>
                           </div>
                         </div>
-
                         <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
-                          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                            Source evidence
-                          </p>
-                          <p className="mt-1 text-sm leading-6 text-slate-300">
-                            &quot;{proposal.source_excerpt}&quot;
-                          </p>
+                          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Source evidence</p>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">&quot;{proposal.source_excerpt}&quot;</p>
                         </div>
-
-                        <a
-                          href={proposal.gmail_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-violet-200 transition hover:text-violet-100"
-                        >
+                        <a href={proposal.gmail_url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-violet-200 transition hover:text-violet-100">
                           Open source email
                           <ExternalLink size={15} />
                         </a>
-
                         <div className="mt-4 grid gap-2 sm:grid-cols-2">
                           <button
                             onClick={() => void approveJobCalendarProposal(proposal)}
                             disabled={resolving || !googleConnected}
                             className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
-                            title={
-                              googleConnected
-                                ? "Approve and add this reminder to Google Calendar"
-                                : "Connect Google Calendar before approving a reminder"
-                            }
+                            title={googleConnected ? "Approve and add this reminder to Google Calendar" : "Connect Google Calendar before approving a reminder"}
                           >
-                            {resolving ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <CalendarCheck2 size={16} />
-                            )}
+                            {resolving ? <Loader2 size={16} className="animate-spin" /> : <CalendarCheck2 size={16} />}
                             Approve and add to Google Calendar
                           </button>
-
                           <button
                             onClick={() => void dismissJobCalendarProposal(proposal)}
                             disabled={resolving}
@@ -1906,12 +1723,8 @@ export default function Home() {
                             Dismiss
                           </button>
                         </div>
-
                         {!googleConnected && (
-                          <button
-                            onClick={connectGoogleCalendar}
-                            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-3 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950"
-                          >
+                          <button onClick={connectGoogleCalendar} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-3 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950">
                             <Unplug size={16} />
                             Connect Google to approve reminders
                           </button>
@@ -1922,35 +1735,22 @@ export default function Home() {
                 )}
               </div>
 
-              {!jobProposalsLoading &&
-                jobCalendarProposals.some(
-                  (proposal) => proposal.status === "approved",
-                ) && (
-                  <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
-                    <p className="font-semibold">Approved job reminders</p>
-                    {jobCalendarProposals
-                      .filter((proposal) => proposal.status === "approved")
-                      .map((proposal) => (
-                        <div
-                          key={proposal.id}
-                          className="mt-2 flex flex-wrap items-center justify-between gap-2"
-                        >
-                          <span>{proposal.title}</span>
-                          {proposal.google_calendar_url && (
-                            <a
-                              href={proposal.google_calendar_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-200 underline underline-offset-2"
-                            >
-                              Open in Calendar
-                              <ExternalLink size={13} />
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                  </div>
-                )}
+              {!jobProposalsLoading && jobCalendarProposals.some((proposal) => proposal.status === "approved") && (
+                <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                  <p className="font-semibold">Approved job reminders</p>
+                  {jobCalendarProposals.filter((proposal) => proposal.status === "approved").map((proposal) => (
+                    <div key={proposal.id} className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <span>{proposal.title}</span>
+                      {proposal.google_calendar_url && (
+                        <a href={proposal.google_calendar_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-200 underline underline-offset-2">
+                          Open in Calendar
+                          <ExternalLink size={13} />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
             <section className="rounded-2xl border border-amber-400/30 bg-amber-300/5 p-5">
@@ -1958,95 +1758,42 @@ export default function Home() {
                 <ShieldCheck className="mt-0.5 shrink-0 text-amber-300" size={20} />
                 <div>
                   <h2 className="text-xl font-bold">Deadline proposals</h2>
-                  <p className="mt-1 text-sm text-slate-400">
-                    A changed date never overwrites your saved deadline
-                    automatically.
-                  </p>
+                  <p className="mt-1 text-sm text-slate-400">A changed date never overwrites your saved deadline automatically.</p>
                 </div>
               </div>
-
               <div className="mt-4 space-y-4">
                 {proposals.map((proposal) => {
-                  const savedEvent = events.find(
-                    (event) => event.id === proposal.event_id,
-                  );
-                  const course = savedEvent
-                    ? coursesById[savedEvent.course_id]
-                    : undefined;
+                  const savedEvent = allEvents.find((event) => event.id === proposal.event_id);
+                  const course = savedEvent ? coursesById[savedEvent.course_id] : undefined;
                   const resolving = resolvingProposalId === proposal.id;
-
                   return (
-                    <article
-                      key={proposal.id}
-                      className="rounded-xl border border-amber-400/30 bg-slate-950/70 p-4"
-                    >
-                      <p className="font-semibold text-amber-100">
-                        {proposal.candidate.title}
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-400">
-                        {course?.code ?? savedEvent?.course_id ?? "Course"} -
-                        review required
-                      </p>
-
+                    <article key={proposal.id} className="rounded-xl border border-amber-400/30 bg-slate-950/70 p-4">
+                      <p className="font-semibold text-amber-100">{proposal.candidate.title}</p>
+                      <p className="mt-1 text-xs text-slate-400">{course?.code ?? savedEvent?.course_id ?? "Course"} - review required</p>
                       <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
                         <div className="rounded-lg border border-slate-800 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Saved deadline
-                          </p>
-                          <p className="mt-1 text-slate-200">
-                            {formatDate(savedEvent?.due_at)}
-                          </p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Saved deadline</p>
+                          <p className="mt-1 text-slate-200">{formatDate(savedEvent?.due_at)}</p>
                         </div>
-
                         <div className="rounded-lg border border-amber-400/30 bg-amber-300/10 p-3">
-                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">
-                            Proposed deadline
-                          </p>
-                          <p className="mt-1 text-amber-100">
-                            {formatDate(proposal.candidate.due_at)}
-                          </p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Proposed deadline</p>
+                          <p className="mt-1 text-amber-100">{formatDate(proposal.candidate.due_at)}</p>
                         </div>
                       </div>
-
-                      <p className="mt-3 text-sm leading-6 text-slate-400">
-                        {proposal.message}
-                      </p>
-
+                      <p className="mt-3 text-sm leading-6 text-slate-400">{proposal.message}</p>
                       <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
-                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                          Proposed evidence
-                        </p>
-                        <p className="mt-1 text-sm leading-6 text-slate-300">
-                          &quot;{proposal.candidate.source_excerpt}&quot;
-                        </p>
+                        <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Proposed evidence</p>
+                        <p className="mt-1 text-sm leading-6 text-slate-300">&quot;{proposal.candidate.source_excerpt}&quot;</p>
                       </div>
-
                       {proposal.candidate.needs_review_reason && (
-                        <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">
-                          {proposal.candidate.needs_review_reason}
-                        </div>
+                        <div className="mt-3 rounded-lg border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">{proposal.candidate.needs_review_reason}</div>
                       )}
-
                       <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                        <button
-                          onClick={() => void resolveProposal(proposal, "accept")}
-                          disabled={resolving}
-                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-300 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {resolving ? (
-                            <Loader2 size={16} className="animate-spin" />
-                          ) : (
-                            <Check size={16} />
-                          )}
+                        <button onClick={() => void resolveProposal(proposal, "accept")} disabled={resolving} className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-300 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60">
+                          {resolving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
                           Accept change
                         </button>
-
-                        <button
-                          onClick={() => void resolveProposal(proposal, "reject")}
-                          disabled={resolving}
-                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2.5 text-sm font-bold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
+                        <button onClick={() => void resolveProposal(proposal, "reject")} disabled={resolving} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2.5 text-sm font-bold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">
                           <X size={16} />
                           Keep saved date
                         </button>
@@ -2054,155 +1801,80 @@ export default function Home() {
                     </article>
                   );
                 })}
-
                 {proposals.length === 0 && (
-                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
-                    No proposed deadline changes are waiting for review.
-                  </div>
+                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">No proposed deadline changes are waiting for review.</div>
                 )}
               </div>
             </section>
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
               <h2 className="text-xl font-bold">Changes to review</h2>
-
               <div className="mt-4 space-y-3">
                 {(workspace?.changes ?? []).map((change) => (
-                  <button
-                    key={`${change.event_id}-${change.kind}`}
-                    onClick={() => {
-                      const event = events.find(
-                        (item) => item.id === change.event_id,
-                      );
-
-                      if (event) {
-                        setSelectedEvent(event);
-                      }
-                    }}
-                    className="w-full rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-left text-sm transition hover:border-cyan-400/60"
-                  >
-                    <p className="font-semibold capitalize text-cyan-200">
-                      {actionLabel(change.kind)}
-                    </p>
+                  <button key={`${change.event_id}-${change.kind}`} onClick={() => {
+                    const event = allEvents.find((item) => item.id === change.event_id);
+                    if (event) setSelectedEvent(event);
+                  }} className="w-full rounded-xl border border-slate-800 bg-slate-950/70 p-3 text-left text-sm transition hover:border-cyan-400/60">
+                    <p className="font-semibold capitalize text-cyan-200">{actionLabel(change.kind)}</p>
                     <p className="mt-1 text-slate-400">{change.message}</p>
                   </button>
                 ))}
-
                 {(workspace?.changes ?? []).length === 0 && (
-                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
-                    No changes need review right now.
-                  </div>
+                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">No changes need review right now.</div>
                 )}
               </div>
             </section>
 
             <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
               <h2 className="text-xl font-bold">Evidence panel</h2>
-
               {selectedEvent ? (
                 <div className="mt-4 space-y-4">
                   <div>
                     <p className="text-sm font-bold">{selectedEvent.title}</p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      {coursesById[selectedEvent.course_id]?.code ??
-                        selectedEvent.course_id}{" "}
-                      - {formatDate(selectedEvent.due_at)}
-                    </p>
+                    <p className="mt-1 text-sm text-slate-400">{coursesById[selectedEvent.course_id]?.code ?? selectedEvent.course_id} - {formatDate(selectedEvent.due_at)}</p>
                   </div>
-
                   <div className="rounded-xl border border-slate-700 bg-slate-950 p-3">
-                    <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      Source evidence
-                    </p>
-                    <p className="text-sm leading-6 text-slate-300">
-                      &quot;{selectedEvent.source_excerpt}&quot;
-                    </p>
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Source evidence</p>
+                    <p className="text-sm leading-6 text-slate-300">&quot;{selectedEvent.source_excerpt}&quot;</p>
                   </div>
-
                   {selectedEvent.history.length > 0 && (
                     <div>
-                      <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                        Deadline history
-                      </p>
-
+                      <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Deadline history</p>
                       <div className="space-y-2">
                         {selectedEvent.history.map((version, index) => (
-                          <div
-                            key={`${version.source_id}-${index}`}
-                            className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm"
-                          >
+                          <div key={`${version.source_id}-${index}`} className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-sm">
                             <div className="flex items-center justify-between gap-3">
-                              <span className="font-medium">
-                                {formatDate(version.due_at)}
-                              </span>
-                              <span
-                                className={
-                                  version.is_current
-                                    ? "text-emerald-300"
-                                    : "text-slate-500"
-                                }
-                              >
-                                {version.is_current ? "Current" : "Previous"}
-                              </span>
+                              <span className="font-medium">{formatDate(version.due_at)}</span>
+                              <span className={version.is_current ? "text-emerald-300" : "text-slate-500"}>{version.is_current ? "Current" : "Previous"}</span>
                             </div>
-                            <p className="mt-1 text-xs text-slate-500">
-                              {version.reason}
-                            </p>
+                            <p className="mt-1 text-xs text-slate-500">{version.reason}</p>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
-
                   {selectedEvent.needs_review_reason && (
-                    <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">
-                      {selectedEvent.needs_review_reason}
-                    </div>
+                    <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">{selectedEvent.needs_review_reason}</div>
                   )}
-
-                  <button
-                    onClick={() => void toggleApproval(selectedEvent)}
-                    disabled={
-                      !["verified", "updated"].includes(selectedEvent.status)
-                    }
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/60 px-4 py-2.5 font-bold text-cyan-200 transition hover:bg-cyan-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-600"
-                  >
+                  <button onClick={() => void toggleApproval(selectedEvent)} disabled={! ["verified", "updated"].includes(selectedEvent.status)} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/60 px-4 py-2.5 font-bold text-cyan-200 transition hover:bg-cyan-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-600">
                     <Check size={17} />
-                    {selectedEvent.approved
-                      ? "Remove approval"
-                      : "Approve for export and sync"}
+                    {selectedEvent.approved ? "Remove approval" : "Approve for export and sync"}
                   </button>
-
                   {selectedEvent.approved && googleConnected && (
-                    <button
-                      onClick={() => void syncSelectedEventToGoogle(selectedEvent)}
-                      disabled={syncingGoogle}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {syncingGoogle ? (
-                        <Loader2 size={17} className="animate-spin" />
-                      ) : (
-                        <CalendarCheck2 size={17} />
-                      )}
+                    <button onClick={() => void syncSelectedEventToGoogle(selectedEvent)} disabled={syncingGoogle} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60">
+                      {syncingGoogle ? <Loader2 size={17} className="animate-spin" /> : <CalendarCheck2 size={17} />}
                       Sync this deadline to Google
                     </button>
                   )}
-
                   {selectedEvent.approved && !googleConnected && (
-                    <button
-                      onClick={connectGoogleCalendar}
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950"
-                    >
+                    <button onClick={connectGoogleCalendar} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950">
                       <Unplug size={17} />
                       Connect Google to sync
                     </button>
                   )}
                 </div>
               ) : (
-                <div className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
-                  Select a deadline to inspect its evidence, history, and export
-                  approval.
-                </div>
+                <div className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">Select a deadline to inspect its evidence, history, and export approval.</div>
               )}
             </section>
 
@@ -2211,7 +1883,6 @@ export default function Home() {
                 <Clock3 size={20} className="text-cyan-300" />
                 <h2 className="text-xl font-bold">How DueScope works</h2>
               </div>
-
               <ol className="mt-4 space-y-3 text-sm text-slate-400">
                 <li>1. Import Canvas work or scan course information.</li>
                 <li>2. AI extracts source-backed deadline candidates.</li>
