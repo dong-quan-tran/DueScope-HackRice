@@ -1,6 +1,8 @@
 ﻿from fastapi import APIRouter
 
+
 router = APIRouter(tags=["demo"])
+
 
 DEMO_WORKSPACE = {
     "student": {
@@ -223,6 +225,7 @@ DEMO_WORKSPACE = {
         },
     ],
     "proposals": [],
+    "job_applications": [],
 }
 
 

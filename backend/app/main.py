@@ -8,6 +8,7 @@ from app.api.events import router as events_router
 from app.api.google import router as google_router
 from app.api.sources import router as sources_router
 from app.api.gmail import router as gmail_router
+from app.api.jobs import router as jobs_router
 
 
 app = FastAPI(
@@ -36,6 +37,7 @@ app.include_router(canvas_router, prefix="/api")
 app.include_router(sources_router, prefix="/api")
 app.include_router(google_router, prefix="/api")
 app.include_router(gmail_router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
 
 
 @app.get("/health")
