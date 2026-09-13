@@ -1,54 +1,129 @@
-@'
 # DueScope
 
-DueScope is an evidence-backed academic deadline manager built for HackRice 16.
+DueScope is an evidence-backed academic deadline manager built for HackRice 16's Work & Productivity track.
 
-It turns course information from syllabi, Canvas-style announcements, and instructor emails into a unified deadline workflow. DueScope preserves source evidence, detects reschedules and conflicting dates, flags high-workload days, and exports approved deadlines as a calendar file.
+It turns course information from Canvas, instructor announcements, emails, syllabi, and pasted course updates into a single reviewable deadline workflow. DueScope preserves the source evidence behind every deadline, detects extensions and reschedules, highlights heavy workload days, and exports approved events to an ICS calendar file.
+
+## What it does
+
+Students often receive deadlines through multiple places: Canvas assignments, announcement posts, instructor emails, syllabus PDFs, and class messages. When dates change, it is easy to miss the update or lose track of which source is authoritative.
+
+DueScope helps by:
+
+- Importing official upcoming deadlines from Canvas
+- Scanning pasted course updates for deadline information
+- Reconciling new information against canonical events
+- Recording deadline history when a date changes
+- Flagging uncertain or conflicting information for review
+- Showing source evidence for every event
+- Requiring approval before a deadline is exported
+- Exporting approved events as an ICS calendar file
+
+```text
+Canvas courses and course updates
+            |
+            v
+Source-backed deadline extraction
+            |
+            v
+Reconciliation and date-history preservation
+            |
+            v
+Review, approval, and workload awareness
+            |
+            v
+ICS calendar export
+```
 
 ## Current status
 
-The current version is a working backend MVP with seeded demo data.
+DueScope currently includes a working full-stack MVP:
+
+- FastAPI backend with seeded workspace data and REST endpoints
+- Next.js and TypeScript frontend dashboard
+- Canvas course lookup and deadline import UI
+- Pasted course-update scanning workflow
+- Canonical academic events with source evidence and history
+- Deadline reconciliation for extensions, reschedules, and new events
+- Review and approval workflow for calendar export
+- Workload warning display for high-volume days
+- ICS calendar export for approved deadlines
+- Automated backend reconciliation tests
+
+The application currently uses in-memory demo storage. Restarting the backend resets seeded data, imported events, approvals, and reconciliation changes.
+
+## Features
+
+### Dashboard
+
+The frontend dashboard includes:
+
+- Upcoming deadline list sorted by due date
+- Status badges for verified, updated, needs-review, and canceled events
+- Course color indicators
+- Changes-to-review inbox
+- Event evidence panel
+- Deadline history timeline
+- Approval controls for exportable events
+- High-workload alert
+- Canvas import controls
+- Course-update scanning form
+- ICS calendar export button
+
+### Canvas import
+
+DueScope can:
+
+1. Load available Canvas courses.
+2. Let the user choose a course.
+3. Import its upcoming assignment deadlines.
+4. Skip past deadlines.
+5. Refresh the workspace after import.
+
+Canvas API access requires the corresponding backend environment configuration.
+
+### Source scanning and reconciliation
+
+The course-update scanner accepts pasted text from sources such as:
+
+- Canvas announcements
+- Instructor emails
+- Syllabus excerpts
+- Other course notices
+
+The backend extracts deadline candidates, compares them with existing academic events, and then either:
+
+- Creates a new event
+- Updates an existing deadline
+- Preserves the prior deadline in event history
+- Marks uncertain information as `needs_review`
+- Records the relevant source evidence
+
+Example input:
 
 ```text
-Seeded academic sources
-→ canonical deadline events
-→ deadline update/reconciliation
-→ user approval
-→ ICS calendar export
+Programming Assignment 2 has been extended.
+It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.
 ```
 
-The current build does not yet connect to live Canvas, Gmail, Google Calendar, Tiger Data, or Gemini. Those integrations come after the core frontend and deterministic backend workflow are stable.
+### Calendar export
 
-## Features implemented
+Only events that are both approved and marked `verified` or `updated` can be exported.
 
-- Seeded workspace with Algorithms, Calculus III, and Analytical Chemistry
-- Assignments, quizzes, exams, labs, and review events
-- Source-backed event evidence
-- Deadline history for reschedules and extensions
-- Event reconciliation API
-- Approval workflow for verified and updated events
-- ICS calendar export for approved events
-- Automated reconciliation tests
-
-## Planned features
-
-- Gemini extraction from pasted syllabus, Canvas announcement, and email text
-- Frontend dashboard with weekly calendar, changes inbox, evidence drawer, and workload view
-- Canvas API ingestion
-- Gmail API ingestion
-- Google Calendar synchronization
-- Tiger Data/PostgreSQL persistence
-- ElevenLabs daily academic briefing
-- Vultr deployment and GoDaddy domain
+DueScope generates a standard `.ics` file that can be imported into calendar applications that support iCalendar files.
 
 ## Tech stack
 
-- Backend: Python, FastAPI, Pydantic
-- Testing: pytest
-- Calendar export: icalendar
-- Planned frontend: Next.js, TypeScript, Tailwind CSS
-- Planned AI extraction: Google Gemini
-- Planned storage: PostgreSQL / Tiger Data
+| Area | Technology |
+|---|---|
+| Frontend | Next.js, React, TypeScript, Tailwind CSS |
+| UI icons | Lucide React |
+| Backend | Python, FastAPI, Pydantic |
+| Testing | pytest |
+| Calendar export | icalendar |
+| Deadline extraction | Gemini-backed workflow when configured |
+| Canvas ingestion | Canvas REST API |
+| Development environment | Windows PowerShell, VS Code recommended |
 
 ## Prerequisites
 
@@ -56,15 +131,20 @@ Install the following before running the project:
 
 - Git
 - Python 3.11 or newer
+- Node.js 20 or newer
+- npm
 - VS Code recommended
 
-Check Python:
+Check installed versions:
 
 ```powershell
 python --version
+node --version
+npm --version
+git --version
 ```
 
-If `python` is not recognized, install Python from [python.org](https://www.python.org/downloads/) and reopen VS Code.
+If Python is unavailable, install it from [python.org](https://www.python.org/downloads/). If Node.js is unavailable, install a current LTS release from [nodejs.org](https://nodejs.org/).
 
 ## Quick start
 
@@ -75,15 +155,15 @@ git clone [https://github.com/OWNER/DueScope.git](https://github.com/OWNER/DueSc
 cd DueScope
 ```
 
-Replace `OWNER` with the GitHub repository owner.
+Replace `OWNER` with the GitHub account or organization that owns the repository.
 
-If you are already inside the cloned repository:
+If you already cloned the project:
 
 ```powershell
 git pull origin main
 ```
 
-### 2. Create and activate the Python virtual environment
+### 2. Create the backend virtual environment
 
 From the repository root:
 
@@ -93,7 +173,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\backend\.venv\Scripts\Activate.ps1
 ```
 
-Your prompt should begin with:
+Your PowerShell prompt should begin with:
 
 ```text
 (.venv)
@@ -106,98 +186,175 @@ python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
 ```
 
-Verify the installation:
+Optional dependency check:
 
 ```powershell
 python -c "import fastapi, uvicorn, pydantic, dateutil, icalendar, pytest; print('Backend dependencies ready')"
 ```
 
-Expected:
+Expected output:
 
 ```text
 Backend dependencies ready
 ```
 
-### 4. Run tests
+### 4. Install frontend dependencies
+
+Open a second PowerShell terminal at the repository root:
+
+```powershell
+cd frontend
+npm install
+cd ..
+```
+
+Do not commit `frontend\node_modules`.
+
+### 5. Configure environment variables
+
+Create a local environment file if the repository provides an example:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Do not commit `.env`.
+
+Depending on enabled integrations, your local configuration may include values such as:
+
+```text
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8001
+CANVAS_BASE_URL=
+CANVAS_ACCESS_TOKEN=
+GEMINI_API_KEY=
+```
+
+Leave integration values blank if you want to use only the seeded demo workspace and do not have credentials configured.
+
+### 6. Run backend tests
+
+From the repository root with the backend environment activated:
 
 ```powershell
 python -m pytest -v
 ```
 
-Expected:
+### 7. Start the backend API
 
-```text
-3 passed
-```
-
-### 5. Start the API
-
-Port `8000` may be reserved on some Windows systems, so DueScope uses port `8001`.
+DueScope uses port `8001` in local development.
 
 ```powershell
 uvicorn app.main:app --reload --app-dir backend --host 127.0.0.1 --port 8001
 ```
 
-Leave this terminal running.
+Keep this terminal running.
 
-The API documentation is available at:
+API documentation is available at:
 
 ```text
 http://127.0.0.1:8001/docs
 ```
 
-## Run the demo
+### 8. Start the frontend
 
-Open a second VS Code PowerShell terminal from the DueScope repository root.
-
-Activate the environment:
+In another terminal:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\backend\.venv\Scripts\Activate.ps1
+cd frontend
+npm run dev
 ```
 
-### Check API health
+Open the local application:
+
+```text
+http://localhost:3000
+```
+
+The frontend expects the backend at:
+
+```text
+http://127.0.0.1:8001
+```
+
+To use a different backend URL, set `NEXT_PUBLIC_API_URL` in the frontend environment configuration and restart the frontend development server.
+
+## Using the app
+
+### Import Canvas deadlines
+
+1. Start both the backend and frontend.
+2. Open `http://localhost:3000`.
+3. In **Import from Canvas**, select **Load Canvas courses**.
+4. Select a returned Canvas course.
+5. Choose **Import deadlines**.
+6. Review the imported events in **Upcoming deadlines**.
+
+If Canvas credentials are unavailable or invalid, the UI shows the backend error message instead of importing data.
+
+### Scan a course update
+
+1. In **Scan a course update**, select the relevant DueScope course.
+2. Choose the source type.
+3. Enter a source title.
+4. Paste an announcement, email, or syllabus text.
+5. Select **Scan for deadlines**.
+6. Review the resulting notice and the affected event in the evidence panel.
+
+### Review a deadline
+
+1. Select an event from **Upcoming deadlines** or **Changes to review**.
+2. Read the source evidence.
+3. Compare current and previous due dates in **Deadline history**.
+4. Review any `needs_review` reason.
+5. Approve trusted verified or updated events for export.
+
+### Export a calendar file
+
+1. Select an event.
+2. Choose **Approve for export** for events with `verified` or `updated` status.
+3. Select **Export approved calendar** in the page header.
+4. Import the downloaded `duescope-calendar.ics` file into a compatible calendar application.
+
+The generated ICS file is local output and should remain untracked by Git.
+
+## API quick reference
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Confirm that the API is running |
+| `GET` | `/api/demo/workspace` | Get courses, events, changes, and workload data |
+| `GET` | `/api/events` | List canonical deadline events |
+| `GET` | `/api/events/{event_id}` | Get one event with evidence and history |
+| `PATCH` | `/api/events/{event_id}/approval` | Approve or unapprove an exportable event |
+| `POST` | `/api/events/reconcile` | Create, update, or flag a deadline candidate |
+| `POST` | `/api/sources/extract-and-reconcile` | Scan pasted source text and reconcile results |
+| `GET` | `/api/canvas/courses` | Load available Canvas courses |
+| `POST` | `/api/canvas/import-course/{course_id}` | Import upcoming deadlines from one Canvas course |
+| `POST` | `/api/calendar/export` | Download approved events as an ICS calendar |
+
+## API examples
+
+### Confirm backend health
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8001/health
 ```
 
-Expected:
-
-```text
-status service
------- -------
-ok     duescope-api
-```
-
-### View the complete demo workspace
+### View the workspace
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8001/api/demo/workspace | ConvertTo-Json -Depth 10
+Invoke-RestMethod http://127.0.0.1:8001/api/demo/workspace |
+  ConvertTo-Json -Depth 10
 ```
 
-### View all deadline events
+### List events
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8001/api/events | ConvertTo-Json -Depth 10
+Invoke-RestMethod http://127.0.0.1:8001/api/events |
+  ConvertTo-Json -Depth 10
 ```
 
-The seeded workspace contains:
-
-- Algorithms Quiz 2, originally due Sept. 15 and updated to Sept. 17
-- Algorithms Programming Assignment 2, due Sept. 18
-- Algorithms Midterm Exam
-- Calculus Exam 1 review session
-- Calculus Exam 1
-- Analytical Chemistry GC-MS lab report, extended to Sept. 21
-- Analytical Chemistry pre-lab worksheet marked `needs_review`
-
-## Approve and export events
-
-Only events with status `verified` or `updated` can be approved and exported.
-
-### Approve events
+### Approve an event
 
 ```powershell
 $approval = @{ approved = $true } | ConvertTo-Json
@@ -206,16 +363,11 @@ Invoke-RestMethod `
   -Method Patch `
   -Uri "http://127.0.0.1:8001/api/events/event-quiz-2/approval" `
   -ContentType "application/json" `
-  -Body $approval | ConvertTo-Json -Depth 10
-
-Invoke-RestMethod `
-  -Method Patch `
-  -Uri "http://127.0.0.1:8001/api/events/event-calculus-exam/approval" `
-  -ContentType "application/json" `
-  -Body $approval | ConvertTo-Json -Depth 10
+  -Body $approval |
+  ConvertTo-Json -Depth 10
 ```
 
-### Export an ICS calendar
+### Export approved events
 
 ```powershell
 $exportBody = @{
@@ -235,17 +387,15 @@ Invoke-WebRequest `
 Get-Content .\duescope-calendar.ics
 ```
 
-Expected output begins with:
+A successful ICS export begins with:
 
 ```text
 BEGIN:VCALENDAR
 ```
 
-The generated `duescope-calendar.ics` file is ignored by Git. Import it into a compatible calendar app to add the approved events.
+### Test reconciliation
 
-## Test deadline reconciliation
-
-This command simulates a new instructor announcement moving Quiz 2 to Friday, Sept. 18. It should preserve the earlier dates in the event history.
+This example simulates a new announcement moving Quiz 2 to Friday, September 18, 2026:
 
 ```powershell
 $body = @{
@@ -269,57 +419,16 @@ Invoke-RestMethod `
   -Method Post `
   -Uri "http://127.0.0.1:8001/api/events/reconcile" `
   -ContentType "application/json" `
-  -Body $body | ConvertTo-Json -Depth 10
+  -Body $body |
+  ConvertTo-Json -Depth 10
 ```
 
-Then inspect the updated event:
+Then inspect the event and its preserved history:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8001/api/events/event-quiz-2 | ConvertTo-Json -Depth 10
+Invoke-RestMethod http://127.0.0.1:8001/api/events/event-quiz-2 |
+  ConvertTo-Json -Depth 10
 ```
-
-Restarting the backend resets all in-memory changes and approvals to the seeded demo state.
-
-## API endpoints
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/health` | Confirm the API is running |
-| `GET` | `/api/demo/workspace` | Get all seeded courses, sources, events, changes, and workload data |
-| `GET` | `/api/events` | List canonical deadline events |
-| `GET` | `/api/events/{event_id}` | Get one event with history and evidence |
-| `PATCH` | `/api/events/{event_id}/approval` | Approve or unapprove an exportable event |
-| `POST` | `/api/events/reconcile` | Create, update, or flag a deadline candidate |
-| `POST` | `/api/calendar/export` | Download selected approved events as an ICS calendar |
-
-## Team workflow
-
-### Start a task
-
-```powershell
-git switch main
-git pull origin main
-git switch -c feat/your-feature-name
-```
-
-### Save and push work
-
-```powershell
-git status
-git add <files>
-git commit -m "feat: concise description"
-git push -u origin feat/your-feature-name
-```
-
-Open a pull request into `main` after pushing.
-
-### Rules
-
-- Do not commit directly to `main`.
-- Use one branch per focused feature.
-- Pull the latest `main` before starting a new task.
-- Do not commit `.env`, API keys, virtual environments, generated ICS files, or local databases.
-- Keep pull requests small and test the backend before merging.
 
 ## Project structure
 
@@ -329,30 +438,112 @@ DueScope/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── calendar.py
+│   │   │   ├── canvas.py
 │   │   │   ├── demo.py
-│   │   │   └── events.py
+│   │   │   ├── events.py
+│   │   │   └── sources.py
 │   │   ├── schemas/
 │   │   │   └── events.py
 │   │   ├── services/
+│   │   │   ├── extraction.py
 │   │   │   └── reconciliation.py
 │   │   └── main.py
 │   ├── tests/
 │   │   └── test_reconciliation.py
 │   └── requirements.txt
+├── frontend/
+│   ├── src/
+│   │   └── app/
+│   │       ├── globals.css
+│   │       ├── layout.tsx
+│   │       └── page.tsx
+│   ├── package.json
+│   └── next.config.ts
 ├── docs/
 ├── fixtures/
+├── .env.example
+├── .gitignore
 ├── BLUEPRINT.md
 ├── pytest.ini
 └── README.md
 ```
 
+Some filenames may vary as the project evolves. Use the repository tree as the source of truth.
+
+## Development workflow
+
+### Start a feature branch
+
+```powershell
+git switch main
+git pull origin main
+git switch -c feat/your-feature-name
+```
+
+### Validate changes
+
+Backend:
+
+```powershell
+.\backend\.venv\Scripts\python.exe -m pytest -v
+```
+
+Frontend:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+```
+
+Check your Git diff:
+
+```powershell
+git diff --check
+git status
+```
+
+### Commit and push
+
+```powershell
+git add <files>
+git commit -m "feat: concise description"
+git push -u origin feat/your-feature-name
+```
+
+Open a pull request into `main` after pushing your branch.
+
+## Repository rules
+
+- Do not commit directly to `main`.
+- Use one focused branch per feature or fix.
+- Pull the latest `main` before beginning new work.
+- Do not commit `.env`, API keys, tokens, local databases, virtual environments, or generated calendar files.
+- Do not commit `frontend\node_modules` or `frontend\.next`.
+- Keep pull requests focused and reviewable.
+- Run backend tests and the frontend production build before merging.
+- Use UTF-8 encoding when saving text files.
+
 ## Current limitations
 
-- Data is stored in memory and resets when the API restarts.
-- Demo sources and events are seeded; live Canvas/email ingestion is not connected yet.
-- The calendar output is ICS export only; direct Google Calendar sync is not implemented yet.
-- No frontend dashboard is connected yet.
-- Gemini extraction has not been added yet.
+- The backend uses in-memory storage, so application state resets when the API restarts.
+- Canvas functionality depends on valid local Canvas API configuration.
+- Gemini-backed extraction depends on valid local API configuration and is not guaranteed to be available in every development environment.
+- The application exports ICS files but does not directly synchronize with Google Calendar.
+- Gmail ingestion, persistent PostgreSQL or Tiger Data storage, ElevenLabs briefing generation, deployment, and custom-domain configuration remain future work.
+- The current interface is an MVP dashboard rather than a full week or month calendar planner.
+
+## Roadmap
+
+- Persistent database storage
+- Direct Google Calendar synchronization
+- Gmail ingestion
+- Improved Canvas synchronization and scheduled refreshes
+- Better conflict resolution and confidence explanations
+- Weekly and monthly calendar views
+- Workload forecasting and study-time recommendations
+- Daily spoken deadline briefings
+- Production deployment and custom domain
 
 ## Team
 
@@ -361,5 +552,4 @@ DueScope/
 
 ## HackRice 16
 
-DueScope is built for the Work & Productivity track.
-'@ | Set-Content -Encoding utf8 README.md
+DueScope is built for the HackRice 16 Work & Productivity track.

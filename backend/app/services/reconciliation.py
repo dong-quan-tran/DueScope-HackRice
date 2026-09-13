@@ -61,20 +61,6 @@ def find_matching_event(
     return None
 
 
-def mark_for_review(
-    event: AcademicEvent,
-    reason: str,
-) -> ReconciliationResult:
-    event.status = EventStatus.NEEDS_REVIEW
-    event.needs_review_reason = reason
-
-    return ReconciliationResult(
-        event=event,
-        action="needs_review",
-        message=f"Marked {event.title} for review: {reason}",
-    )
-
-
 def ensure_current_history(event: AcademicEvent) -> None:
     if any(version.is_current for version in event.history):
         return
@@ -89,6 +75,39 @@ def ensure_current_history(event: AcademicEvent) -> None:
     )
 
 
+def apply_accepted_proposal(
+    event: AcademicEvent,
+    proposal: EventCandidate,
+) -> AcademicEvent:
+    """Return an updated event after a user explicitly accepts a proposal."""
+    updated = event.model_copy(deep=True)
+
+    ensure_current_history(updated)
+
+    for version in updated.history:
+        version.is_current = False
+
+    updated.history.append(
+        EventVersion(
+            due_at=proposal.due_at,
+            source_id=proposal.source_id,
+            reason="Accepted proposed deadline change after review.",
+            is_current=True,
+        )
+    )
+
+    updated.title = proposal.title
+    updated.starts_at = proposal.starts_at
+    updated.due_at = proposal.due_at
+    updated.source_id = proposal.source_id
+    updated.source_excerpt = proposal.source_excerpt
+    updated.status = EventStatus.UPDATED
+    updated.approved = False
+    updated.needs_review_reason = None
+
+    return updated
+
+
 def reconcile_candidate(
     candidate: EventCandidate,
     candidate_source_type: SourceType,
@@ -97,9 +116,9 @@ def reconcile_candidate(
     source_types: dict[str, SourceType],
     source_received_at: dict[str, datetime],
 ) -> ReconciliationResult:
-    # Work with a copy so the incoming candidate stays unchanged.
+    """Compare one candidate to canonical events without mutating inputs."""
     proposed = candidate.model_copy(deep=True)
-    warnings = []
+    warnings: list[str] = []
 
     if proposed.needs_review_reason:
         warnings.append(proposed.needs_review_reason)
@@ -115,9 +134,7 @@ def reconcile_candidate(
     elif not has_timezone(proposed.due_at):
         warnings.append("The deadline must include timezone information.")
 
-    proposed.needs_review_reason = (
-        " | ".join(warnings) if warnings else None
-    )
+    proposed.needs_review_reason = " | ".join(warnings) if warnings else None
 
     existing = find_matching_event(proposed, events)
 
@@ -129,11 +146,7 @@ def reconcile_candidate(
             title=proposed.title,
             starts_at=proposed.starts_at,
             due_at=proposed.due_at,
-            status=(
-                EventStatus.NEEDS_REVIEW
-                if warnings
-                else EventStatus.VERIFIED
-            ),
+            status=EventStatus.NEEDS_REVIEW if warnings else EventStatus.VERIFIED,
             approved=False,
             workload_minutes=0,
             source_id=proposed.source_id,
@@ -159,17 +172,13 @@ def reconcile_candidate(
             message=message,
         )
 
-    reasons = []
+    reasons: list[str] = []
 
     if existing.needs_review_reason:
-        reasons.append(
-            f"Existing warning: {existing.needs_review_reason}"
-        )
+        reasons.append(f"Existing warning: {existing.needs_review_reason}")
 
     if proposed.needs_review_reason:
-        reasons.append(
-            f"Incoming warning: {proposed.needs_review_reason}"
-        )
+        reasons.append(f"Incoming warning: {proposed.needs_review_reason}")
 
     if proposed.due_at == existing.due_at:
         if reasons:
@@ -201,7 +210,6 @@ def reconcile_candidate(
             proposed_candidate=proposed,
         )
 
-    # Source priority explains a suggestion; it never applies it.
     existing_source_type = source_types.get(existing.source_id)
     incoming_priority = SOURCE_PRIORITY.get(candidate_source_type)
     existing_priority = SOURCE_PRIORITY.get(existing_source_type)
@@ -224,8 +232,7 @@ def reconcile_candidate(
         or not has_timezone(existing_source_time)
     ):
         reasons.append(
-            "Source timing cannot be compared because timezone "
-            "information is missing."
+            "Source timing cannot be compared because timezone information is missing."
         )
     elif candidate_received_at > existing_source_time:
         reasons.append("The incoming source was received more recently.")
@@ -245,3 +252,4 @@ def reconcile_candidate(
         ),
         proposed_candidate=proposed,
     )
+

@@ -1,12 +1,13 @@
-﻿from datetime import datetime
-from uuid import uuid4
+﻿from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.api.demo import DEMO_WORKSPACE
-from app.schemas.events import ChangeType, EventCandidate, SourceType
+from app.api.events import source_maps, store_proposal
+from app.schemas.events import AcademicEvent, EventCandidate, SourceType
 from app.schemas.extraction import ExtractDeadlineRequest, ExtractionResponse
+from app.services.deadline_validation import validate_candidate
 from app.services.gemini_extraction import extract_deadlines
 from app.services.reconciliation import reconcile_candidate
 
@@ -18,6 +19,7 @@ class ReconciledExtractionItem(BaseModel):
     action: str
     message: str
     event_id: str
+    proposal_id: str | None = None
 
 
 class ExtractAndReconcileResponse(BaseModel):
@@ -27,11 +29,13 @@ class ExtractAndReconcileResponse(BaseModel):
 
 
 def to_source_type(value: str) -> SourceType:
+    if value == "other":
+        return SourceType.MANUAL_ENTRY
+
     return SourceType(value)
 
 
-@router.post("/extract", response_model=ExtractionResponse)
-def extract_source_deadlines(request: ExtractDeadlineRequest) -> ExtractionResponse:
+def run_extraction(request: ExtractDeadlineRequest) -> ExtractionResponse:
     try:
         return extract_deadlines(request)
     except RuntimeError as error:
@@ -43,19 +47,21 @@ def extract_source_deadlines(request: ExtractDeadlineRequest) -> ExtractionRespo
         ) from error
 
 
-@router.post("/extract-and-reconcile", response_model=ExtractAndReconcileResponse)
+@router.post("/extract", response_model=ExtractionResponse)
+def extract_source_deadlines(
+    request: ExtractDeadlineRequest,
+) -> ExtractionResponse:
+    return run_extraction(request)
+
+
+@router.post(
+    "/extract-and-reconcile",
+    response_model=ExtractAndReconcileResponse,
+)
 def extract_and_reconcile(
     request: ExtractDeadlineRequest,
 ) -> ExtractAndReconcileResponse:
-    try:
-        extraction = extract_deadlines(request)
-    except RuntimeError as error:
-        raise HTTPException(status_code=503, detail=str(error)) from error
-    except Exception as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Gemini extraction failed: {error}",
-        ) from error
+    extraction = run_extraction(request)
 
     source_id = f"source-import-{uuid4().hex[:8]}"
     source_type = to_source_type(request.source_type.value)
@@ -71,72 +77,85 @@ def extract_and_reconcile(
         }
     )
 
-    events = [
-        event
-        for event in DEMO_WORKSPACE["events"]
-    ]
-    source_types = {
-        source["id"]: SourceType(source["type"])
-        for source in DEMO_WORKSPACE["sources"]
-    }
-    source_received_at = {
-        source["id"]: datetime.fromisoformat(source["received_at"])
-        for source in DEMO_WORKSPACE["sources"]
-    }
-
     results: list[ReconciledExtractionItem] = []
 
     for extracted in extraction.events:
-        needs_review_reason = (
-            "; ".join(extracted.uncertainties)
-            if extracted.uncertainties
-            else None
-        )
+        raw_candidate = {
+            "course_id": request.course_id,
+            "type": extracted.event_type.value,
+            "title": extracted.title,
+            "starts_at": (
+                extracted.starts_at.isoformat()
+                if extracted.starts_at
+                else None
+            ),
+            "due_at": (
+                extracted.due_at.isoformat()
+                if extracted.due_at
+                else None
+            ),
+            "source_id": source_id,
+            "source_excerpt": extracted.source_excerpt,
+            "change_type": extracted.change_type.value,
+            "confidence": extracted.confidence,
+            "needs_review_reason": (
+                " | ".join(extracted.uncertainties)
+                if extracted.uncertainties
+                else None
+            ),
+        }
 
-        candidate = EventCandidate(
-            course_id=request.course_id,
-            type=extracted.event_type,
-            title=extracted.title,
-            starts_at=extracted.starts_at,
-            due_at=extracted.due_at,
-            source_id=source_id,
-            source_excerpt=extracted.source_excerpt,
-            change_type=extracted.change_type,
-            confidence=extracted.confidence,
-            needs_review_reason=needs_review_reason,
+        validation = validate_candidate(
+            raw_candidate,
+            request.source_text,
         )
+        candidate_data = validation["candidate"]
+
+        validation_reason = " | ".join(validation["issues"])
+        existing_reason = candidate_data.get("needs_review_reason")
+        reasons = [
+            reason
+            for reason in (existing_reason, validation_reason)
+            if reason
+        ]
+        candidate_data["needs_review_reason"] = " | ".join(reasons) or None
+
+        try:
+            candidate = EventCandidate.model_validate(candidate_data)
+        except Exception as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Extracted deadline candidate is invalid: {error}",
+            ) from error
+
+        events = [
+            AcademicEvent.model_validate(event)
+            for event in DEMO_WORKSPACE["events"]
+        ]
+        source_types, source_received_at = source_maps()
 
         result = reconcile_candidate(
             candidate=candidate,
             candidate_source_type=source_type,
             candidate_received_at=request.source_received_at,
-            events=[
-                __import__(
-                    "app.schemas.events",
-                    fromlist=["AcademicEvent"],
-                ).AcademicEvent.model_validate(event)
-                for event in events
-            ],
+            events=events,
             source_types=source_types,
             source_received_at=source_received_at,
         )
 
-        payload = result.event.model_dump(mode="json")
-        existing_index = next(
-            (
-                index
-                for index, event in enumerate(DEMO_WORKSPACE["events"])
-                if event["id"] == result.event.id
-            ),
-            None,
-        )
+        proposal_id = None
 
-        if existing_index is None:
-            DEMO_WORKSPACE["events"].append(payload)
-            events.append(payload)
-        else:
-            DEMO_WORKSPACE["events"][existing_index] = payload
-            events[existing_index] = payload
+        if result.action == "created":
+            DEMO_WORKSPACE["events"].append(
+                result.event.model_dump(mode="json")
+            )
+        elif result.proposed_candidate is not None:
+            proposal = store_proposal(
+                event_id=result.event.id,
+                candidate=result.proposed_candidate,
+                message=result.message,
+            )
+            proposal_id = proposal.id
 
         results.append(
             ReconciledExtractionItem(
@@ -144,6 +163,7 @@ def extract_and_reconcile(
                 action=result.action,
                 message=result.message,
                 event_id=result.event.id,
+                proposal_id=proposal_id,
             )
         )
 
