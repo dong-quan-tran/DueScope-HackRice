@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import base64
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import Any
+from urllib.parse import quote_plus
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -13,6 +14,7 @@ from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
 from app.api.demo import DEMO_WORKSPACE
+from app.api.google import upsert_job_calendar_event
 from app.services.google_oauth import get_credentials
 
 
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 DEFAULT_JOB_QUERY = (
-    "newer_than:365d in:inbox "
+    "newer_than:14d in:inbox "
     "-from:linkedin.com "
     "-from:chase.com "
     "-from:americanexpress.com "
@@ -47,8 +49,8 @@ class JobScanRequest(BaseModel):
         min_length=1,
         max_length=500,
         description=(
-            "Gmail query used to find recruiting messages. The default only "
-            "allows common applicant-tracking-system sender domains."
+            "Gmail query used to find recruiting messages. The default scans "
+            "the previous 14 days from common recruiting-system sender domains."
         ),
     )
     max_results: int = Field(
@@ -97,6 +99,7 @@ STATUS_PRIORITY = {
 
 def decode_base64url(value: str) -> str:
     padding = "=" * (-len(value) % 4)
+
     return base64.urlsafe_b64decode(value + padding).decode(
         "utf-8",
         errors="replace",
@@ -110,16 +113,11 @@ def html_to_text(value: str) -> str:
         value,
     )
     without_tags = re.sub(r"(?s)<[^>]+>", " ", without_scripts)
+
     return re.sub(r"\s+", " ", unescape(without_tags)).strip()
 
 
 def extract_text_parts(payload: dict[str, Any]) -> list[str]:
-    """
-    Recursively collect readable Gmail content.
-
-    Prefer text/plain and use converted HTML only if plain text is unavailable.
-    Attachments are intentionally ignored.
-    """
     mime_type = payload.get("mimeType", "")
     body_data = payload.get("body", {}).get("data")
 
@@ -160,6 +158,24 @@ def header_value(headers: list[dict[str, str]], name: str) -> str:
     return ""
 
 
+def sender_email(sender: str) -> str:
+    match = re.search(r"<([^>]+)>", sender)
+
+    if match:
+        return match.group(1).strip()
+
+    fallback = re.search(r"[\w.+-]+@[\w.-]+\.\w+", sender)
+
+    return fallback.group(0) if fallback else sender.strip()
+
+
+def gmail_search_url(sender: str, subject: str) -> str:
+    email_address = sender_email(sender)
+    query = f'from:{email_address} subject:"{subject}"'
+
+    return f"https://mail.google.com/mail/u/0/#search/{quote_plus(query)}"
+
+
 def message_received_at(message: dict[str, Any]) -> datetime:
     headers = message.get("payload", {}).get("headers", [])
     raw_date = header_value(headers, "Date")
@@ -176,6 +192,7 @@ def message_received_at(message: dict[str, Any]) -> datetime:
             pass
 
     internal_date = message.get("internalDate")
+
     if internal_date:
         return datetime.fromtimestamp(
             int(internal_date) / 1000,
@@ -189,18 +206,16 @@ def cleaned_message_text(payload: dict[str, Any]) -> str:
     parts = extract_text_parts(payload)
     text = "\n\n".join(part.strip() for part in parts if part.strip())
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
     return text[:12000]
 
 
-def classify_job_status(subject: str, body: str) -> tuple[str, str]:
-    """
-    Classify only explicit recruiting language.
+def normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", unescape(value)).strip()
 
-    Rejection checks must run before application-received checks because
-    rejection emails commonly include phrases such as "thank you for applying."
-    """
-    text = unescape(f"{subject}\n{body}").lower()
-    text = re.sub(r"\s+", " ", text)
+
+def classify_job_status(subject: str, body: str) -> tuple[str, str]:
+    text = normalize_text(f"{subject}\n{body}").lower()
 
     rejection_phrases = (
         "we regret to inform you",
@@ -334,17 +349,13 @@ def classify_job_status(subject: str, body: str) -> tuple[str, str]:
 
 
 def company_from_sender(sender: str) -> str:
-    """
-    Use the sender display name as a cautious fallback company label.
-
-    The user can correct it through PATCH /api/jobs/{job_id}.
-    """
     display_name = sender.split("<", maxsplit=1)[0].strip().strip("\"")
 
     if display_name:
         return display_name
 
     match = re.search(r"@([\w.-]+)", sender)
+
     if not match:
         return "Unknown company"
 
@@ -354,28 +365,20 @@ def company_from_sender(sender: str) -> str:
         "",
         domain,
     )
+
     return domain.split(".")[0].replace("-", " ").title()
 
 
 def role_from_message(subject: str, body: str) -> str:
-    """
-    Extract a role only from explicit application/interview wording.
-
-    The parser intentionally returns "Role needs review" when it cannot find
-    a sufficiently clear title. This avoids merging unrelated recruiter mail.
-    """
-    text = unescape(f"{subject}\n{body}")
-    text = re.sub(r"\s+", " ", text).strip()
+    text = normalize_text(f"{subject}\n{body}")
 
     patterns = (
         r"(?:application for(?: the)? position of|application for(?: the)? position|"
         r"applied for(?: the)? position of|applied for(?: the)? position|"
         r"position of|position:|role of)\s+"
         r"(.+?)(?:\.\s|,\s|;\s|\|\s| we\s| you\s| at\s| with\s|$)",
-
         r"(?:thank you for your interest in|interest in)\s+"
         r"(.+?)\s+position\s+at\s+",
-
         r"(?:interview for|interviewing for|application to)\s+"
         r"(.+?)(?:\.\s|,\s|;\s|\|\s| at\s| with\s|$)",
     )
@@ -387,14 +390,12 @@ def role_from_message(subject: str, body: str) -> str:
             continue
 
         role = re.sub(r"\s+", " ", match.group(1)).strip(" -:|.")
-
         role = re.sub(
             r"^(?:the\s+)?(?:position\s+of\s+|position\s+|role\s+of\s+)",
             "",
             role,
             flags=re.IGNORECASE,
         ).strip()
-
         role = re.sub(
             r"^the\s+",
             "",
@@ -409,31 +410,25 @@ def role_from_message(subject: str, body: str) -> str:
 
 
 def message_excerpt(text: str) -> str:
-    normalized = re.sub(r"\s+", " ", text).strip()
-    return normalized[:700]
+    return normalize_text(text)[:700]
 
 
 def find_existing_job_by_message_id(message_id: str) -> dict[str, Any] | None:
-    return next(
-        (
-            job
-            for job in DEMO_WORKSPACE["job_applications"]
-            if job.get("source_message_id") == message_id
-        ),
-        None,
-    )
+    for job in DEMO_WORKSPACE["job_applications"]:
+        if job.get("source_message_id") == message_id:
+            return job
+
+        for history_item in job.get("history", []):
+            if history_item.get("message_id") == message_id:
+                return job
+
+    return None
 
 
 def find_best_matching_job(
     company: str,
     role: str,
 ) -> dict[str, Any] | None:
-    """
-    Match only records whose company and role are both meaningful.
-
-    Do not merge vague "Role needs review" messages. Merging unknown messages
-    is how unrelated notifications can become one invented job record.
-    """
     if role == "Role needs review":
         return None
 
@@ -462,6 +457,233 @@ def find_best_matching_job(
     return None
 
 
+def parse_explicit_datetime(
+    text: str,
+    received_at: datetime,
+) -> tuple[datetime, str] | None:
+    """
+    Parse deliberately narrow explicit date formats.
+
+    Supported examples:
+    - September 18, 2026 at 11:59 PM CT
+    - Sep 18 at 5:00 PM CDT
+    - 09/18/2026 11:59 PM CT
+
+    The function returns None for ambiguous/no-time statements. That is safer
+    than inventing a deadline from incomplete email wording.
+    """
+    normalized = normalize_text(text)
+
+    month_pattern = (
+        r"(?P<month>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|"
+        r"May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|"
+        r"Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    )
+
+    patterns = (
+        rf"{month_pattern}\s+(?P<day>\d{{1,2}})(?:,\s*(?P<year>\d{{4}}))?"
+        rf"(?:\s+at)?\s+(?P<hour>\d{{1,2}}):(?P<minute>\d{{2}})\s*"
+        rf"(?P<ampm>AM|PM)\s*(?P<tz>CT|CDT|CST)?",
+        r"(?P<month_num>\d{1,2})/(?P<day_num>\d{1,2})/(?P<year_num>\d{4})"
+        r"(?:\s+at)?\s+(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*"
+        r"(?P<ampm>AM|PM)\s*(?P<tz>CT|CDT|CST)?",
+    )
+
+    month_lookup = {
+        "jan": 1,
+        "january": 1,
+        "feb": 2,
+        "february": 2,
+        "mar": 3,
+        "march": 3,
+        "apr": 4,
+        "april": 4,
+        "may": 5,
+        "jun": 6,
+        "june": 6,
+        "jul": 7,
+        "july": 7,
+        "aug": 8,
+        "august": 8,
+        "sep": 9,
+        "sept": 9,
+        "september": 9,
+        "oct": 10,
+        "october": 10,
+        "nov": 11,
+        "november": 11,
+        "dec": 12,
+        "december": 12,
+    }
+
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+
+        if not match:
+            continue
+
+        values = match.groupdict()
+
+        try:
+            if values.get("month_num"):
+                month = int(values["month_num"])
+                day = int(values["day_num"])
+                year = int(values["year_num"])
+            else:
+                month = month_lookup[values["month"].lower()]
+                day = int(values["day"])
+                year = int(values["year"] or received_at.year)
+
+                candidate_date = datetime(year, month, day, tzinfo=received_at.tzinfo)
+                if candidate_date < received_at - timedelta(days=30):
+                    year += 1
+
+            hour = int(values["hour"])
+            minute = int(values["minute"])
+            ampm = values["ampm"].upper()
+
+            if ampm == "PM" and hour != 12:
+                hour += 12
+            elif ampm == "AM" and hour == 12:
+                hour = 0
+
+            parsed = datetime(
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                tzinfo=timezone(timedelta(hours=-5)),
+            )
+            return parsed, match.group(0)
+        except (KeyError, ValueError):
+            continue
+
+    return None
+
+
+def proposal_kind_for_message(status: str, text: str) -> str | None:
+    """
+    Determine whether a job email contains a Calendar-worthy action.
+
+    A proposal is created only after a separate explicit datetime parser finds
+    a specific date and time. This function only identifies the action type.
+    """
+    normalized = normalize_text(text).lower()
+
+    assessment_signals = (
+        "online assessment",
+        "coding assessment",
+        "coding challenge",
+        "technical assessment",
+        "complete the assessment",
+        "take-home assessment",
+    )
+
+    confirmed_interview_signals = (
+        "interview is confirmed",
+        "interview confirmed",
+        "scheduled interview",
+        "your interview is scheduled",
+    )
+
+    if any(signal in normalized for signal in confirmed_interview_signals):
+        return "confirmed_interview"
+
+    if status == "online_assessment" and any(
+        signal in normalized for signal in assessment_signals
+    ):
+        return "online_assessment_deadline"
+
+    is_interview_stage = status in {
+        "recruiter_screen",
+        "phone_screen",
+        "technical_interview",
+        "onsite_interview",
+        "final_interview",
+    }
+
+    scheduling_deadline_patterns = (
+        r"\bchoose\s+(?:a\s+)?(?:time|day|slot).*?\bby\b",
+        r"\bselect\s+(?:a\s+)?(?:time|day|slot).*?\bby\b",
+        r"\bschedule.*?\bby\b",
+        r"\brespond\s+by\b",
+        r"\breply\s+by\b",
+        r"\bconfirm.*?\bby\b",
+    )
+
+    if is_interview_stage and any(
+        re.search(pattern, normalized, flags=re.IGNORECASE)
+        for pattern in scheduling_deadline_patterns
+    ):
+        return "interview_scheduling_deadline"
+
+    return None
+
+
+def proposal_title(kind: str, company: str) -> str:
+    if kind == "online_assessment_deadline":
+        return f"Complete assessment — {company}"
+
+    if kind == "interview_scheduling_deadline":
+        return f"Choose interview time — {company}"
+
+    return f"Interview — {company}"
+
+
+def create_job_calendar_proposal(
+    *,
+    job: dict[str, Any],
+    kind: str,
+    detected_at: datetime,
+    matched_excerpt: str,
+    source_message_id: str,
+    gmail_url: str,
+) -> dict[str, Any] | None:
+    """
+    Create one pending proposal per Gmail message/kind.
+
+    A missing/ambiguous date returns None. DueScope will keep the job's next
+    action but never invent a Calendar reminder.
+    """
+    for proposal in DEMO_WORKSPACE["job_calendar_proposals"]:
+        if (
+            proposal["source_message_id"] == source_message_id
+            and proposal["kind"] == kind
+        ):
+            return proposal
+
+    if kind == "confirmed_interview":
+        starts_at = detected_at
+        ends_at = detected_at + timedelta(minutes=30)
+    else:
+        starts_at = detected_at - timedelta(minutes=30)
+        ends_at = detected_at
+
+    proposal = {
+        "id": f"job-calendar-proposal-{uuid4().hex}",
+        "job_id": job["id"],
+        "company": job["company"],
+        "role": job["role"],
+        "kind": kind,
+        "title": proposal_title(kind, job["company"]),
+        "starts_at": starts_at.isoformat(),
+        "ends_at": ends_at.isoformat(),
+        "source_message_id": source_message_id,
+        "source_excerpt": matched_excerpt,
+        "gmail_url": gmail_url,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "resolved_at": None,
+        "google_calendar_event_id": None,
+        "google_calendar_url": None,
+        "calendar_synced_at": None,
+    }
+
+    DEMO_WORKSPACE["job_calendar_proposals"].append(proposal)
+    return proposal
+
+
 def job_summary(job: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": job["id"],
@@ -474,9 +696,11 @@ def job_summary(job: dict[str, Any]) -> dict[str, Any]:
         "source_subject": job["source_subject"],
         "source_sender": job["source_sender"],
         "source_message_id": job["source_message_id"],
+        "source_thread_id": job.get("source_thread_id", ""),
         "gmail_url": job["gmail_url"],
         "source_excerpt": job["source_excerpt"],
         "updated_at": job["updated_at"],
+        "history": job.get("history", []),
     }
 
 
@@ -491,18 +715,22 @@ def list_job_applications() -> list[dict[str, Any]]:
     return [job_summary(job) for job in jobs]
 
 
-@router.post("/scan")
+@router.get("/proposals")
+def list_job_calendar_proposals() -> list[dict[str, Any]]:
+    return sorted(
+        DEMO_WORKSPACE["job_calendar_proposals"],
+        key=lambda proposal: proposal["created_at"],
+        reverse=True,
+    )
+
+
 @router.post("/scan")
 def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
     """
-    Scan read-only Gmail for recruiting/application messages.
+    Scan Gmail read-only for recruiting/application messages.
 
-    Safety rules:
-    - The default search limits messages to common ATS sender domains.
-    - Classifications require explicit language.
-    - Every result retains a Gmail source link and requires review.
-    - No interview, assessment, or job status is automatically written to
-      Google Calendar.
+    Job reminders are created as pending proposals only when an email contains
+    explicit date-and-time wording. Gmail scanning never writes to Calendar.
     """
     credentials = get_credentials()
     service = build("gmail", "v1", credentials=credentials)
@@ -524,6 +752,7 @@ def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
     updated: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
+    calendar_proposals: list[dict[str, Any]] = []
 
     for message_ref in message_refs:
         message_id = message_ref["id"]
@@ -563,9 +792,9 @@ def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
             status, next_action = classify_job_status(subject, body)
             company = company_from_sender(sender)
             role = role_from_message(subject, body)
+            source_url = gmail_search_url(sender, subject)
 
             existing_job = None
-
             if role != "Role needs review":
                 existing_job = find_best_matching_job(company, role)
 
@@ -582,9 +811,7 @@ def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
                     "source_sender": sender,
                     "source_message_id": message_id,
                     "source_thread_id": message.get("threadId", ""),
-                    "gmail_url": (
-                        f"https://mail.google.com/mail/u/0/#all/{message_id}"
-                    ),
+                    "gmail_url": source_url,
                     "source_excerpt": message_excerpt(body),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                     "history": [
@@ -596,59 +823,74 @@ def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
                         }
                     ],
                 }
-
                 DEMO_WORKSPACE["job_applications"].append(job)
                 created.append(job_summary(job))
-                continue
-
-            old_status = str(existing_job["status"])
-            should_replace_status = (
-                STATUS_PRIORITY[status] >= STATUS_PRIORITY.get(old_status, 0)
-                or status == "rejected"
-            )
-
-            if should_replace_status:
-                existing_job["status"] = status
-                existing_job["next_action"] = next_action
-                existing_job["received_at"] = received_at.isoformat()
-                existing_job["source_subject"] = subject
-                existing_job["source_sender"] = sender
-                existing_job["source_message_id"] = message_id
-                existing_job["source_thread_id"] = message.get("threadId", "")
-                existing_job["gmail_url"] = (
-                    f"https://mail.google.com/mail/u/0/#all/{message_id}"
-                )
-                existing_job["source_excerpt"] = message_excerpt(body)
-                existing_job["updated_at"] = datetime.now(timezone.utc).isoformat()
-                existing_job["requires_review"] = True
-                existing_job["history"].append(
-                    {
-                        "status": status,
-                        "message_id": message_id,
-                        "received_at": received_at.isoformat(),
-                        "reason": (
-                            f"Status updated from {old_status} to {status} "
-                            "based on Gmail message."
-                        ),
-                    }
+            else:
+                job = existing_job
+                old_status = str(job["status"])
+                should_replace_status = (
+                    STATUS_PRIORITY[status] >= STATUS_PRIORITY.get(old_status, 0)
+                    or status == "rejected"
                 )
 
-                updated.append(job_summary(existing_job))
-                continue
+                if should_replace_status:
+                    job["status"] = status
+                    job["next_action"] = next_action
+                    job["received_at"] = received_at.isoformat()
+                    job["source_subject"] = subject
+                    job["source_sender"] = sender
+                    job["source_message_id"] = message_id
+                    job["source_thread_id"] = message.get("threadId", "")
+                    job["gmail_url"] = source_url
+                    job["source_excerpt"] = message_excerpt(body)
+                    job["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    job["requires_review"] = True
+                    job["history"].append(
+                        {
+                            "status": status,
+                            "message_id": message_id,
+                            "received_at": received_at.isoformat(),
+                            "reason": (
+                                f"Status updated from {old_status} to {status} "
+                                "based on Gmail message."
+                            ),
+                        }
+                    )
+                else:
+                    job["history"].append(
+                        {
+                            "status": status,
+                            "message_id": message_id,
+                            "received_at": received_at.isoformat(),
+                            "reason": (
+                                f"Earlier or lower-priority Gmail message "
+                                f"classified as {status}; current status "
+                                f"remains {old_status}."
+                            ),
+                        }
+                    )
 
-            existing_job["history"].append(
-                {
-                    "status": status,
-                    "message_id": message_id,
-                    "received_at": received_at.isoformat(),
-                    "reason": (
-                        f"Earlier or lower-priority Gmail message classified as "
-                        f"{status}; current status remains {old_status}."
-                    ),
-                }
+                updated.append(job_summary(job))
+
+            kind = proposal_kind_for_message(status, f"{subject}\n{body}")
+            parsed_datetime = parse_explicit_datetime(
+                f"{subject}\n{body}",
+                received_at,
             )
 
-            updated.append(job_summary(existing_job))
+            if kind is not None and parsed_datetime is not None:
+                detected_at, matched_excerpt = parsed_datetime
+                proposal = create_job_calendar_proposal(
+                    job=job,
+                    kind=kind,
+                    detected_at=detected_at,
+                    matched_excerpt=matched_excerpt,
+                    source_message_id=message_id,
+                    gmail_url=source_url,
+                )
+
+                if proposal is not None:
+                    calendar_proposals.append(proposal)
 
         except Exception as exc:
             errors.append(
@@ -665,13 +907,81 @@ def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
         "updated": updated,
         "skipped": skipped,
         "errors": errors,
+        "calendar_proposals": calendar_proposals,
         "safety_note": (
-            "Job messages are read-only. The default search is restricted to "
-            "common recruiting-system senders. All inferred statuses require "
-            "review, and no interview or assessment is automatically added "
-            "to Google Calendar."
+            "Job messages are read-only. Calendar reminders are generated only "
+            "as pending proposals from explicit dates and require user approval "
+            "before Google Calendar is changed."
         ),
     }
+
+
+@router.post("/proposals/{proposal_id}/approve")
+def approve_job_calendar_proposal(proposal_id: str) -> dict[str, Any]:
+    proposal = next(
+        (
+            item
+            for item in DEMO_WORKSPACE["job_calendar_proposals"]
+            if item["id"] == proposal_id
+        ),
+        None,
+    )
+
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Job calendar proposal not found.")
+
+    if proposal["status"] == "dismissed":
+        raise HTTPException(
+            status_code=400,
+            detail="Dismissed job calendar proposals cannot be approved.",
+        )
+
+    proposal["status"] = "approved"
+    proposal["resolved_at"] = datetime.now(timezone.utc).isoformat()
+
+    try:
+        calendar_result = upsert_job_calendar_event(proposal)
+    except Exception as exc:
+        proposal["status"] = "pending"
+        proposal["resolved_at"] = None
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not sync approved job reminder to Google Calendar: {exc}",
+        ) from exc
+
+    return {
+        "proposal": proposal,
+        "calendar": calendar_result,
+    }
+
+
+@router.post("/proposals/{proposal_id}/dismiss")
+def dismiss_job_calendar_proposal(proposal_id: str) -> dict[str, Any]:
+    proposal = next(
+        (
+            item
+            for item in DEMO_WORKSPACE["job_calendar_proposals"]
+            if item["id"] == proposal_id
+        ),
+        None,
+    )
+
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Job calendar proposal not found.")
+
+    if proposal["status"] == "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This reminder is already approved and synced. Delete it from "
+                "Google Calendar manually if it is no longer needed."
+            ),
+        )
+
+    proposal["status"] = "dismissed"
+    proposal["resolved_at"] = datetime.now(timezone.utc).isoformat()
+
+    return proposal
 
 
 @router.patch("/{job_id}")

@@ -226,6 +226,7 @@ DEMO_WORKSPACE = {
     ],
     "proposals": [],
     "job_applications": [],
+    "job_calendar_proposals": [],
 }
 
 
