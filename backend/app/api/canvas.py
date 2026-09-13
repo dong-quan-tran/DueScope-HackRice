@@ -4,6 +4,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 
 from app.api.demo import DEMO_WORKSPACE
+from app.api.events import source_maps, store_proposal
 from app.schemas.events import (
     AcademicEvent,
     ChangeType,
@@ -28,6 +29,7 @@ def assignment_event_type(name: str) -> EventType:
         return EventType.LAB
     if "project" in normalized:
         return EventType.PROJECT
+
     return EventType.ASSIGNMENT
 
 
@@ -59,6 +61,7 @@ def get_canvas_profile() -> dict:
 def get_canvas_courses() -> list[dict]:
     try:
         courses = canvas_client().courses()
+
         return [
             {
                 "id": course["id"],
@@ -82,10 +85,13 @@ def get_canvas_assignments(
         assignments = canvas_client().assignments(course_id)
 
         results = []
+
         for assignment in assignments:
             due_at = parse_canvas_datetime(assignment.get("due_at"))
+
             if due_at is None:
                 continue
+
             if not include_past and due_at < now:
                 continue
 
@@ -125,12 +131,22 @@ def import_canvas_course(
             )
 
         course_key = f"canvas-{course_id}"
-        if not any(course["id"] == course_key for course in DEMO_WORKSPACE["courses"]):
+
+        if not any(
+            course["id"] == course_key
+            for course in DEMO_WORKSPACE["courses"]
+        ):
             DEMO_WORKSPACE["courses"].append(
                 {
                     "id": course_key,
-                    "code": canvas_course.get("course_code") or f"Canvas {course_id}",
-                    "name": canvas_course.get("name") or "Canvas Course",
+                    "code": (
+                        canvas_course.get("course_code")
+                        or f"Canvas {course_id}"
+                    ),
+                    "name": (
+                        canvas_course.get("name")
+                        or "Canvas Course"
+                    ),
                     "color": "#F97316",
                 }
             )
@@ -142,6 +158,7 @@ def import_canvas_course(
 
         for assignment in assignments:
             due_at = parse_canvas_datetime(assignment.get("due_at"))
+
             if due_at is None:
                 continue
 
@@ -150,45 +167,50 @@ def import_canvas_course(
                 continue
 
             source_id = f"canvas-assignment-{assignment['id']}"
-            if not any(source["id"] == source_id for source in DEMO_WORKSPACE["sources"]):
+            source_excerpt = (
+                f"Canvas assignment due date: {due_at.isoformat()}. "
+                f"Points possible: {assignment.get('points_possible')}."
+            )
+
+            if not any(
+                source["id"] == source_id
+                for source in DEMO_WORKSPACE["sources"]
+            ):
                 DEMO_WORKSPACE["sources"].append(
                     {
                         "id": source_id,
                         "course_id": course_key,
                         "type": SourceType.CANVAS_DUE_FIELD.value,
-                        "title": assignment.get("name", "Canvas assignment"),
-                        "received_at": datetime.now(timezone.utc).isoformat(),
-                        "raw_text": assignment.get("description") or assignment.get("name", ""),
+                        "title": assignment.get(
+                            "name",
+                            "Canvas assignment",
+                        ),
+                        "received_at": datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                        "raw_text": source_excerpt,
                         "source_url": assignment.get("html_url"),
                     }
                 )
 
             candidate = EventCandidate(
                 course_id=course_key,
-                type=assignment_event_type(assignment.get("name", "")),
+                type=assignment_event_type(
+                    assignment.get("name", "")
+                ),
                 title=assignment.get("name", "Canvas assignment"),
                 due_at=due_at,
                 source_id=source_id,
-                source_excerpt=(
-                    f"Canvas assignment due date: {due_at.isoformat()}. "
-                    f"Points possible: {assignment.get('points_possible')}."
-                ),
+                source_excerpt=source_excerpt,
                 change_type=ChangeType.NEW,
                 confidence="high",
             )
 
-            source_types = {
-                source["id"]: SourceType(source["type"])
-                for source in DEMO_WORKSPACE["sources"]
-            }
-            source_received_at = {
-                source["id"]: datetime.fromisoformat(source["received_at"])
-                for source in DEMO_WORKSPACE["sources"]
-            }
             events = [
                 AcademicEvent.model_validate(event)
                 for event in DEMO_WORKSPACE["events"]
             ]
+            source_types, source_received_at = source_maps()
 
             result = reconcile_candidate(
                 candidate=candidate,
@@ -199,20 +221,19 @@ def import_canvas_course(
                 source_received_at=source_received_at,
             )
 
-            event_payload = result.event.model_dump(mode="json")
-            existing_index = next(
-                (
-                    index
-                    for index, event in enumerate(DEMO_WORKSPACE["events"])
-                    if event["id"] == result.event.id
-                ),
-                None,
-            )
+            proposal_id = None
 
-            if existing_index is None:
-                DEMO_WORKSPACE["events"].append(event_payload)
-            else:
-                DEMO_WORKSPACE["events"][existing_index] = event_payload
+            if result.action == "created":
+                DEMO_WORKSPACE["events"].append(
+                    result.event.model_dump(mode="json")
+                )
+            elif result.proposed_candidate is not None:
+                proposal = store_proposal(
+                    event_id=result.event.id,
+                    candidate=result.proposed_candidate,
+                    message=result.message,
+                )
+                proposal_id = proposal.id
 
             imported.append(
                 {
@@ -221,6 +242,7 @@ def import_canvas_course(
                     "due_at": due_at.isoformat(),
                     "action": result.action,
                     "event_id": result.event.id,
+                    "proposal_id": proposal_id,
                 }
             )
 

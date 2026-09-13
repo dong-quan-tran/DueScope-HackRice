@@ -93,15 +93,6 @@ class WorkloadDay(BaseModel):
     reason: str
 
 
-class DemoWorkspace(BaseModel):
-    student: dict[str, str]
-    courses: list[Course]
-    sources: list[Source]
-    events: list[AcademicEvent]
-    changes: list[Change]
-    workload: list[WorkloadDay]
-
-
 class EventCandidate(BaseModel):
     course_id: str
     type: EventType
@@ -113,3 +104,23 @@ class EventCandidate(BaseModel):
     change_type: ChangeType = ChangeType.UNKNOWN
     confidence: str = "medium"
     needs_review_reason: Optional[str] = None
+
+
+class DeadlineProposal(BaseModel):
+    id: str
+    event_id: str
+    candidate: EventCandidate
+    message: str
+    created_at: datetime
+    resolved: bool = False
+    resolution: Optional[str] = None
+
+
+class DemoWorkspace(BaseModel):
+    student: dict[str, str]
+    courses: list[Course]
+    sources: list[Source]
+    events: list[AcademicEvent]
+    changes: list[Change]
+    workload: list[WorkloadDay]
+    proposals: list[DeadlineProposal] = Field(default_factory=list)

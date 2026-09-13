@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+﻿from fastapi import APIRouter
 
 router = APIRouter(tags=["demo"])
 
@@ -222,6 +222,7 @@ DEMO_WORKSPACE = {
             "reason": "GC-MS Lab Report due at 5:00 PM",
         },
     ],
+    "proposals": [],
 }
 
 
