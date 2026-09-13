@@ -162,14 +162,18 @@ def import_canvas_course(
             if due_at is None:
                 continue
 
-            if not include_past and due_at < now:
+            if due_at < now:
                 skipped_past_count += 1
                 continue
 
-            source_id = f"canvas-assignment-{assignment['id']}"
-            source_excerpt = (
-                f"Canvas assignment due date: {due_at.isoformat()}. "
-                f"Points possible: {assignment.get('points_possible')}."
+            assignment_id = assignment.get("id")
+            if assignment_id is None:
+                continue
+
+            source_id = f"canvas-assignment-{assignment_id}"
+            source_excerpt = assignment.get("description") or assignment.get(
+                "name",
+                "Canvas assignment",
             )
 
             if not any(
@@ -188,7 +192,7 @@ def import_canvas_course(
                         "received_at": datetime.now(
                             timezone.utc
                         ).isoformat(),
-                        "raw_text": source_excerpt,
+                        "raw_text": assignment.get("description") or "",
                         "source_url": assignment.get("html_url"),
                     }
                 )
@@ -237,16 +241,18 @@ def import_canvas_course(
 
             imported.append(
                 {
-                    "canvas_assignment_id": assignment["id"],
+                    "canvas_assignment_id": assignment_id,
                     "title": assignment.get("name", ""),
                     "due_at": due_at.isoformat(),
+                    "html_url": assignment.get("html_url"),
+                    "description": assignment.get("description") or "",
                     "action": result.action,
                     "event_id": result.event.id,
                     "proposal_id": proposal_id,
                 }
             )
 
-        return {
+        response = {
             "course": {
                 "canvas_id": course_id,
                 "course_id": course_key,
@@ -258,6 +264,17 @@ def import_canvas_course(
             "skipped_past_count": skipped_past_count,
             "items": imported,
         }
+
+        if not imported:
+            response["message"] = (
+                "No upcoming Canvas assignments with due dates were found"
+            )
+        else:
+            response["message"] = (
+                f"Imported {len(imported)} upcoming Canvas assignment(s)."
+            )
+
+        return response
     except HTTPException:
         raise
     except Exception as error:

@@ -45,6 +45,10 @@ def find_matching_event(
     candidate: EventCandidate,
     events: list[AcademicEvent],
 ) -> Optional[AcademicEvent]:
+    for event in events:
+        if event.source_id == candidate.source_id:
+            return event
+
     candidate_title = normalize_title(candidate.title)
 
     if not candidate_title:
