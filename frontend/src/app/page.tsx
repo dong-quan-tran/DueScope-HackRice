@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  BriefcaseBusiness,
   CalendarCheck2,
   CalendarDays,
   Check,
   ChevronRight,
   Clock3,
+  ExternalLink,
   FileText,
   Loader2,
+  Pencil,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -131,13 +134,101 @@ type GoogleSyncResult = {
   failed: GoogleSyncItem[];
 };
 
-type DeadlineFilter = "7" | "14" | "30" | "all";
+type JobStatus =
+  | "application_received"
+  | "online_assessment"
+  | "recruiter_screen"
+  | "phone_screen"
+  | "technical_interview"
+  | "onsite_interview"
+  | "final_interview"
+  | "offer"
+  | "rejected"
+  | "unknown";
 
-const DEADLINE_FILTERS: Array<{ value: DeadlineFilter; label: string }> = [
-  { value: "7", label: "Next 7 days" },
-  { value: "14", label: "Next 14 days" },
-  { value: "30", label: "Next 30 days" },
-  { value: "all", label: "All semester" },
+type JobHistoryItem = {
+  status: JobStatus;
+  message_id: string;
+  received_at: string;
+  reason: string;
+};
+
+type JobApplication = {
+  id: string;
+  company: string;
+  role: string;
+  status: JobStatus;
+  next_action: string;
+  received_at: string;
+  requires_review: boolean;
+  source_subject: string;
+  source_sender: string;
+  source_message_id: string;
+  source_thread_id?: string;
+  gmail_url: string;
+  source_excerpt: string;
+  updated_at: string;
+  history?: JobHistoryItem[];
+};
+
+type JobScanResult = {
+  query: string;
+  matched_count: number;
+  created: JobApplication[];
+  updated: JobApplication[];
+  skipped: Array<{ message_id: string; reason: string }>;
+  errors: Array<{ message_id: string; reason: string }>;
+  calendar_proposals?: JobCalendarProposal[];
+  safety_note: string;
+};
+
+type JobProposalKind =
+  | "online_assessment_deadline"
+  | "interview_scheduling_deadline"
+  | "confirmed_interview";
+
+type JobProposalStatus = "pending" | "approved" | "dismissed";
+
+type JobCalendarProposal = {
+  id: string;
+  job_id: string;
+  company: string;
+  role: string;
+  kind: JobProposalKind;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  source_message_id: string;
+  source_excerpt: string;
+  gmail_url: string;
+  status: JobProposalStatus;
+  created_at: string;
+  resolved_at: string | null;
+  google_calendar_event_id: string | null;
+  google_calendar_url: string | null;
+  calendar_synced_at: string | null;
+};
+
+type JobProposalApprovalResponse = {
+  proposal: JobCalendarProposal;
+  calendar: {
+    action: "created" | "updated";
+    google_calendar_event_id: string;
+    calendar_url: string;
+  };
+};
+
+const JOB_STATUSES: JobStatus[] = [
+  "application_received",
+  "online_assessment",
+  "recruiter_screen",
+  "phone_screen",
+  "technical_interview",
+  "onsite_interview",
+  "final_interview",
+  "offer",
+  "rejected",
+  "unknown",
 ];
 
 const seedAnnouncement = `Programming Assignment 2 has been extended.
@@ -177,12 +268,57 @@ function statusStyle(status: AcademicEvent["status"]) {
   return "border-slate-200 bg-slate-100 text-slate-700";
 }
 
+function jobStatusStyle(status: JobStatus) {
+  if (status === "rejected") {
+    return "border-rose-400/40 bg-rose-400/10 text-rose-200";
+  }
+
+  if (status === "offer") {
+    return "border-emerald-400/40 bg-emerald-400/10 text-emerald-200";
+  }
+
+  if (
+    [
+      "online_assessment",
+      "recruiter_screen",
+      "phone_screen",
+      "technical_interview",
+      "onsite_interview",
+      "final_interview",
+    ].includes(status)
+  ) {
+    return "border-cyan-400/40 bg-cyan-400/10 text-cyan-200";
+  }
+
+  if (status === "application_received") {
+    return "border-violet-400/40 bg-violet-400/10 text-violet-200";
+  }
+
+  return "border-slate-600 bg-slate-800 text-slate-300";
+}
+
+function jobProposalStyle(kind: JobProposalKind) {
+  if (kind === "confirmed_interview") {
+    return "border-cyan-400/40 bg-cyan-400/10 text-cyan-200";
+  }
+
+  if (kind === "online_assessment_deadline") {
+    return "border-violet-400/40 bg-violet-400/10 text-violet-200";
+  }
+
+  return "border-amber-400/40 bg-amber-400/10 text-amber-200";
+}
+
 function actionLabel(action: string) {
   return action.replaceAll("_", " ");
 }
 
 function syncItemSummary(items: GoogleSyncItem[]) {
   return items.map((item) => item.title).join(", ");
+}
+
+function uniqueJobs(jobs: JobApplication[]) {
+  return Array.from(new Map(jobs.map((job) => [job.id, job])).values());
 }
 
 export default function Home() {
@@ -200,10 +336,6 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [canvasCourses, setCanvasCourses] = useState<CanvasCourse[]>([]);
   const [canvasCourseId, setCanvasCourseId] = useState("");
-  const [canvasFocusCourseId, setCanvasFocusCourseId] = useState<string | null>(
-    null,
-  );
-  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("14");
   const [canvasLoading, setCanvasLoading] = useState(false);
   const [canvasImporting, setCanvasImporting] = useState(false);
   const [resolvingProposalId, setResolvingProposalId] = useState("");
@@ -211,6 +343,18 @@ export default function Home() {
   const [googleStatusLoading, setGoogleStatusLoading] = useState(true);
   const [syncingGoogle, setSyncingGoogle] = useState(false);
   const [syncResult, setSyncResult] = useState<GoogleSyncResult | null>(null);
+  const [jobs, setJobs] = useState<JobApplication[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
+  const [scanningJobs, setScanningJobs] = useState(false);
+  const [jobScanResult, setJobScanResult] = useState<JobScanResult | null>(null);
+  const [editingJobId, setEditingJobId] = useState("");
+  const [jobDraft, setJobDraft] = useState<Partial<JobApplication>>({});
+  const [savingJobId, setSavingJobId] = useState("");
+  const [jobCalendarProposals, setJobCalendarProposals] = useState<
+    JobCalendarProposal[]
+  >([]);
+  const [jobProposalsLoading, setJobProposalsLoading] = useState(true);
+  const [resolvingJobProposalId, setResolvingJobProposalId] = useState("");
 
   const coursesById = useMemo(
     () =>
@@ -227,6 +371,12 @@ export default function Home() {
           event.approved && ["verified", "updated"].includes(event.status),
       ),
     [workspace],
+  );
+
+  const pendingJobCalendarProposals = useMemo(
+    () =>
+      jobCalendarProposals.filter((proposal) => proposal.status === "pending"),
+    [jobCalendarProposals],
   );
 
   async function loadWorkspace(showLoading = true) {
@@ -291,9 +441,73 @@ export default function Home() {
     }
   }
 
+  async function loadJobs(showLoading = true) {
+    if (showLoading) {
+      setJobsLoading(true);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/jobs`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not load job applications.");
+      }
+
+      const data = (await response.json()) as JobApplication[];
+      setJobs(data);
+    } catch (error) {
+      if (showLoading) {
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Could not load job applications.",
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setJobsLoading(false);
+      }
+    }
+  }
+
+  async function loadJobCalendarProposals(showLoading = true) {
+    if (showLoading) {
+      setJobProposalsLoading(true);
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/proposals`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not load job reminder proposals.");
+      }
+
+      const data = (await response.json()) as JobCalendarProposal[];
+      setJobCalendarProposals(data);
+    } catch (error) {
+      if (showLoading) {
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Could not load job reminder proposals.",
+        );
+      }
+    } finally {
+      if (showLoading) {
+        setJobProposalsLoading(false);
+      }
+    }
+  }
+
   useEffect(() => {
     void loadWorkspace();
     void loadGoogleStatus();
+    void loadJobs();
+    void loadJobCalendarProposals();
   }, []);
 
   async function loadCanvasCourses() {
@@ -356,18 +570,13 @@ export default function Home() {
           ).length
         : 0;
 
-      const importMessage = data.message
-        ? `${data.message} `
-        : `Processed ${data.imported_count} upcoming Canvas deadline(s). `;
-      const pastMessage = data.skipped_past_count
-        ? `${data.skipped_past_count} past deadline(s) skipped. `
-        : "";
-      const proposalMessage = proposalCount
-        ? `${proposalCount} change proposal(s) need review.`
-        : "";
-
-      setCanvasFocusCourseId(`canvas-${canvasCourseId}`);
-      setNotice(`${importMessage}${pastMessage}${proposalMessage}`.trim());
+      setNotice(
+        `Processed ${data.imported_count} upcoming Canvas deadline(s). ` +
+          `${data.skipped_past_count} past deadline(s) skipped.` +
+          (proposalCount
+            ? ` ${proposalCount} change proposal(s) need review.`
+            : ""),
+      );
 
       await loadWorkspace(false);
     } catch (error) {
@@ -624,6 +833,235 @@ export default function Home() {
     }
   }
 
+  async function syncSelectedEventToGoogle(event: AcademicEvent) {
+    if (!googleConnected) {
+      setNotice("Connect Google Calendar before syncing deadlines.");
+      return;
+    }
+
+    setSyncingGoogle(true);
+    setNotice("");
+    setSyncResult(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/google/calendar/sync-approved`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event_ids: [event.id] }),
+        },
+      );
+      const data = (await response.json()) as GoogleSyncResult | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data ? data.detail : "Google Calendar sync failed.",
+        );
+      }
+
+      const result = data as GoogleSyncResult;
+      setSyncResult(result);
+
+      if (result.created.length > 0) {
+        setNotice(`${event.title} was added to Google Calendar.`);
+      } else if (result.updated.length > 0) {
+        setNotice(`${event.title} was updated in Google Calendar.`);
+      } else if (result.skipped.length > 0) {
+        setNotice(
+          result.skipped[0].reason ?? "This deadline could not be synced.",
+        );
+      } else if (result.failed.length > 0) {
+        setNotice(result.failed[0].reason ?? "Google Calendar sync failed.");
+      }
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Google Calendar sync failed.",
+      );
+    } finally {
+      setSyncingGoogle(false);
+    }
+  }
+
+  async function scanJobEmails() {
+    setScanningJobs(true);
+    setNotice("");
+    setJobScanResult(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_results: 25 }),
+      });
+      const data = (await response.json()) as JobScanResult | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data ? data.detail : "Could not scan job emails.",
+        );
+      }
+
+      const result = data as JobScanResult;
+      setJobScanResult(result);
+      await Promise.all([loadJobs(false), loadJobCalendarProposals(false)]);
+
+      const totalChanges = result.created.length + result.updated.length;
+      const proposalCount = result.calendar_proposals?.length ?? 0;
+      setNotice(
+        totalChanges > 0
+          ? `Job email scan complete: ${result.created.length} record(s) created, ${result.updated.length} record(s) updated, and ${proposalCount} reminder proposal(s) found.`
+          : `Job email scan complete: ${result.skipped.length} message(s) skipped and ${proposalCount} new reminder proposal(s) found.`,
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not scan job emails.",
+      );
+    } finally {
+      setScanningJobs(false);
+    }
+  }
+
+  function beginEditJob(job: JobApplication) {
+    setEditingJobId(job.id);
+    setJobDraft({
+      company: job.company,
+      role: job.role,
+      status: job.status,
+      next_action: job.next_action,
+      requires_review: false,
+    });
+  }
+
+  function cancelEditJob() {
+    setEditingJobId("");
+    setJobDraft({});
+  }
+
+  async function saveJob(job: JobApplication) {
+    setSavingJobId(job.id);
+    setNotice("");
+
+    try {
+      const response = await fetch(`${API_URL}/api/jobs/${job.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company: jobDraft.company?.trim() || job.company,
+          role: jobDraft.role?.trim() || job.role,
+          status: jobDraft.status || job.status,
+          next_action: jobDraft.next_action?.trim() || job.next_action,
+          requires_review: false,
+        }),
+      });
+      const data = (await response.json()) as JobApplication | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data ? data.detail : "Could not save job application.",
+        );
+      }
+
+      setJobs((current) =>
+        current.map((item) =>
+          item.id === job.id ? (data as JobApplication) : item,
+        ),
+      );
+      setEditingJobId("");
+      setJobDraft({});
+      setNotice(`${job.company} application details were saved.`);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not save job application.",
+      );
+    } finally {
+      setSavingJobId("");
+    }
+  }
+
+  async function approveJobCalendarProposal(proposal: JobCalendarProposal) {
+    if (!googleConnected) {
+      setNotice("Connect Google Calendar before approving a job reminder.");
+      return;
+    }
+
+    setResolvingJobProposalId(proposal.id);
+    setNotice("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/jobs/proposals/${proposal.id}/approve`,
+        { method: "POST" },
+      );
+      const data = (await response.json()) as
+        | JobProposalApprovalResponse
+        | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data
+            ? data.detail
+            : "Could not approve the job reminder.",
+        );
+      }
+
+      const result = data as JobProposalApprovalResponse;
+      setJobCalendarProposals((current) =>
+        current.map((item) =>
+          item.id === proposal.id ? result.proposal : item,
+        ),
+      );
+      setNotice(
+        `${proposal.title} was ${result.calendar.action} in Google Calendar.`,
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not approve the job reminder.",
+      );
+    } finally {
+      setResolvingJobProposalId("");
+    }
+  }
+
+  async function dismissJobCalendarProposal(proposal: JobCalendarProposal) {
+    setResolvingJobProposalId(proposal.id);
+    setNotice("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/jobs/proposals/${proposal.id}/dismiss`,
+        { method: "POST" },
+      );
+      const data = (await response.json()) as JobCalendarProposal | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data
+            ? data.detail
+            : "Could not dismiss the job reminder.",
+        );
+      }
+
+      const dismissed = data as JobCalendarProposal;
+      setJobCalendarProposals((current) =>
+        current.map((item) => (item.id === proposal.id ? dismissed : item)),
+      );
+      setNotice(`${proposal.title} was dismissed. Google Calendar was not changed.`);
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "Could not dismiss the job reminder.",
+      );
+    } finally {
+      setResolvingJobProposalId("");
+    }
+  }
+
   if (loading) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 text-white">
@@ -635,26 +1073,7 @@ export default function Home() {
     );
   }
 
-  const events = (workspace?.events ?? []).filter(
-    (event) =>
-      canvasFocusCourseId === null || event.course_id === canvasFocusCourseId,
-  );
-  const selectedFilter = DEADLINE_FILTERS.find(
-    (filter) => filter.value === deadlineFilter,
-  ) ?? DEADLINE_FILTERS[1];
-  const displayedEvents = events.filter((event) => {
-    if (!event.due_at) return false;
-
-    const dueAt = new Date(event.due_at);
-    if (Number.isNaN(dueAt.getTime())) return false;
-    if (deadlineFilter === "all") return true;
-
-    const now = new Date();
-    const end = new Date(now);
-    end.setDate(end.getDate() + Number(deadlineFilter));
-
-    return dueAt >= now && dueAt <= end;
-  });
+  const events = workspace?.events ?? [];
   const proposals = (workspace?.proposals ?? []).filter(
     (proposal) => !proposal.resolved,
   );
@@ -750,8 +1169,8 @@ export default function Home() {
                 <div>
                   <h2 className="text-xl font-bold">Upcoming deadlines</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    {selectedFilter.label} - {displayedEvents.length} displayed
-                    deadline{displayedEvents.length === 1 ? "" : "s"}
+                    Click an event to inspect its evidence, history, and export
+                    approval.
                   </p>
                 </div>
 
@@ -765,31 +1184,8 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <label
-                  htmlFor="deadline-filter"
-                  className="text-sm font-semibold text-slate-300"
-                >
-                  Show deadlines
-                </label>
-                <select
-                  id="deadline-filter"
-                  value={deadlineFilter}
-                  onChange={(event) =>
-                    setDeadlineFilter(event.target.value as DeadlineFilter)
-                  }
-                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
-                >
-                  {DEADLINE_FILTERS.map((filter) => (
-                    <option key={filter.value} value={filter.value}>
-                      {filter.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div className="space-y-3">
-                {displayedEvents
+                {events
                   .slice()
                   .sort((a, b) =>
                     (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"),
@@ -841,11 +1237,10 @@ export default function Home() {
                     );
                   })}
 
-                {displayedEvents.length === 0 && (
+                {events.length === 0 && (
                   <div className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
-                    No deadlines due {deadlineFilter === "all"
-                      ? "in this semester"
-                      : `in the next ${deadlineFilter} days`}.
+                    No deadlines yet. Import Canvas assignments or scan a course
+                    update to get started.
                   </div>
                 )}
               </div>
@@ -976,6 +1371,261 @@ export default function Home() {
                 )}
                 {scanning ? "Scanning course update..." : "Scan for deadlines"}
               </button>
+            </section>
+
+            <section className="rounded-2xl border border-violet-400/30 bg-violet-400/5 p-5">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex gap-3">
+                  <BriefcaseBusiness className="mt-0.5 shrink-0 text-violet-300" size={21} />
+                  <div>
+                    <h2 className="text-xl font-bold">Job applications</h2>
+                    <p className="mt-1 max-w-2xl text-sm text-slate-400">
+                      Scan Gmail read-only for recruiting-system emails. DueScope
+                      keeps the original source email and marks inferred statuses
+                      for review.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    onClick={() => void loadJobs(true)}
+                    disabled={jobsLoading || scanningJobs}
+                    className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-violet-400 hover:text-violet-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    title="Refresh job applications"
+                    aria-label="Refresh job applications"
+                  >
+                    <RefreshCw
+                      size={17}
+                      className={jobsLoading ? "animate-spin" : ""}
+                    />
+                  </button>
+
+                  <button
+                    onClick={() => void scanJobEmails()}
+                    disabled={scanningJobs}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {scanningJobs ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <BriefcaseBusiness size={18} />
+                    )}
+                    {scanningJobs ? "Scanning Gmail..." : "Scan for new job updates"}
+                  </button>
+                </div>
+              </div>
+
+              {jobScanResult && (
+                <div className="mt-4 rounded-xl border border-violet-400/30 bg-slate-950/70 p-4 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-violet-200">
+                      Latest scan: {jobScanResult.matched_count} matching email
+                      {jobScanResult.matched_count === 1 ? "" : "s"}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {jobScanResult.created.length} created ·{" "}
+                      {jobScanResult.updated.length} updated ·{" "}
+                      {jobScanResult.calendar_proposals?.length ?? 0} reminders ·{" "}
+                      {jobScanResult.skipped.length} skipped ·{" "}
+                      {jobScanResult.errors.length} errors
+                    </p>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    {jobScanResult.safety_note}
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-5 space-y-3">
+                {jobsLoading ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+                    <Loader2 size={16} className="animate-spin" />
+                    Loading job applications...
+                  </div>
+                ) : jobs.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
+                    No job applications are tracked yet. Scan job emails to find
+                    messages from supported recruiting systems.
+                  </div>
+                ) : (
+                  uniqueJobs(jobs).map((job) => {
+                    const editing = editingJobId === job.id;
+                    const saving = savingJobId === job.id;
+
+                    return (
+                      <article
+                        key={job.id}
+                        className="rounded-xl border border-slate-700 bg-slate-950/70 p-4"
+                      >
+                        {editing ? (
+                          <div className="space-y-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Company
+                                <input
+                                  value={jobDraft.company ?? ""}
+                                  onChange={(event) =>
+                                    setJobDraft((current) => ({
+                                      ...current,
+                                      company: event.target.value,
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
+                                />
+                              </label>
+
+                              <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                Role
+                                <input
+                                  value={jobDraft.role ?? ""}
+                                  onChange={(event) =>
+                                    setJobDraft((current) => ({
+                                      ...current,
+                                      role: event.target.value,
+                                    }))
+                                  }
+                                  className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
+                                />
+                              </label>
+                            </div>
+
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Status
+                              <select
+                                value={jobDraft.status ?? job.status}
+                                onChange={(event) =>
+                                  setJobDraft((current) => ({
+                                    ...current,
+                                    status: event.target.value as JobStatus,
+                                  }))
+                                }
+                                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
+                              >
+                                {JOB_STATUSES.map((status) => (
+                                  <option key={status} value={status}>
+                                    {actionLabel(status)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Next action
+                              <input
+                                value={jobDraft.next_action ?? ""}
+                                onChange={(event) =>
+                                  setJobDraft((current) => ({
+                                    ...current,
+                                    next_action: event.target.value,
+                                  }))
+                                }
+                                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm normal-case tracking-normal text-slate-100 outline-none focus:border-violet-400"
+                              />
+                            </label>
+
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <button
+                                onClick={() => void saveJob(job)}
+                                disabled={saving}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {saving ? (
+                                  <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                  <Check size={16} />
+                                )}
+                                Save review
+                              </button>
+
+                              <button
+                                onClick={cancelEditJob}
+                                disabled={saving}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2.5 text-sm font-bold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <X size={16} />
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="font-bold text-slate-100">
+                                    {job.company}
+                                  </h3>
+                                  <span
+                                    className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobStatusStyle(
+                                      job.status,
+                                    )}`}
+                                  >
+                                    {actionLabel(job.status)}
+                                  </span>
+                                  {job.requires_review && (
+                                    <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-2 py-0.5 text-xs font-semibold text-amber-200">
+                                      Review needed
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="mt-1 text-sm text-violet-200">
+                                  {job.role}
+                                </p>
+                              </div>
+
+                              <button
+                                onClick={() => beginEditJob(job)}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-violet-400/50 px-3 py-2 text-sm font-bold text-violet-200 transition hover:bg-violet-400 hover:text-slate-950"
+                              >
+                                <Pencil size={15} />
+                                Review
+                              </button>
+                            </div>
+
+                            <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                                Next action
+                              </p>
+                              <p className="mt-1 text-sm text-slate-300">
+                                {job.next_action}
+                              </p>
+                            </div>
+
+                            <p className="mt-3 text-xs text-slate-500">
+                              Latest source: {formatDate(job.received_at)} ·{" "}
+                              {job.source_sender}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-400">
+                              {job.source_subject}
+                            </p>
+
+                            <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-500">
+                              {job.source_excerpt}
+                            </p>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-3">
+                              <a
+                                href={job.gmail_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-sm font-semibold text-violet-200 transition hover:text-violet-100"
+                              >
+                                Open source email
+                                <ExternalLink size={15} />
+                              </a>
+
+                              <span className="text-xs text-slate-600">
+                                Updated {formatDate(job.updated_at)}
+                              </span>
+                            </div>
+                          </>
+                        )}
+                      </article>
+                    );
+                  })
+                )}
+              </div>
             </section>
           </section>
 
@@ -1124,6 +1774,183 @@ export default function Home() {
                   )}
                 </div>
               </div>
+            </section>
+
+            <section className="rounded-2xl border border-violet-400/30 bg-violet-400/5 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex gap-3">
+                  <BriefcaseBusiness className="mt-0.5 shrink-0 text-violet-300" size={20} />
+                  <div>
+                    <h2 className="text-xl font-bold">Job reminders to review</h2>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Gmail creates reminders only from explicit dates. Approving
+                      a proposal is the only action that changes Google Calendar.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => void loadJobCalendarProposals(true)}
+                  disabled={jobProposalsLoading || Boolean(resolvingJobProposalId)}
+                  className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-violet-400 hover:text-violet-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  title="Refresh job reminder proposals"
+                  aria-label="Refresh job reminder proposals"
+                >
+                  <RefreshCw
+                    size={16}
+                    className={jobProposalsLoading ? "animate-spin" : ""}
+                  />
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-4">
+                {jobProposalsLoading ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-400">
+                    <Loader2 size={16} className="animate-spin" />
+                    Loading job reminders...
+                  </div>
+                ) : pendingJobCalendarProposals.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-700 p-4 text-sm text-slate-500">
+                    No pending job reminders. Scan job emails to detect explicit
+                    assessment deadlines or interview scheduling deadlines.
+                  </div>
+                ) : (
+                  pendingJobCalendarProposals.map((proposal) => {
+                    const resolving = resolvingJobProposalId === proposal.id;
+
+                    return (
+                      <article
+                        key={proposal.id}
+                        className="rounded-xl border border-violet-400/30 bg-slate-950/70 p-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-violet-100">
+                              {proposal.title}
+                            </p>
+                            <p className="mt-1 text-sm text-violet-200">
+                              {proposal.company} · {proposal.role}
+                            </p>
+                          </div>
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(
+                              proposal.kind,
+                            )}`}
+                          >
+                            {actionLabel(proposal.kind)}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                          <div className="rounded-lg border border-slate-800 bg-slate-900/70 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                              Starts
+                            </p>
+                            <p className="mt-1 text-slate-200">
+                              {formatDate(proposal.starts_at)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-violet-400/30 bg-violet-400/10 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-violet-300">
+                              Deadline or event end
+                            </p>
+                            <p className="mt-1 text-violet-100">
+                              {formatDate(proposal.ends_at)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
+                          <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                            Source evidence
+                          </p>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">
+                            &quot;{proposal.source_excerpt}&quot;
+                          </p>
+                        </div>
+
+                        <a
+                          href={proposal.gmail_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-violet-200 transition hover:text-violet-100"
+                        >
+                          Open source email
+                          <ExternalLink size={15} />
+                        </a>
+
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <button
+                            onClick={() => void approveJobCalendarProposal(proposal)}
+                            disabled={resolving || !googleConnected}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-400 px-3 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-violet-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            title={
+                              googleConnected
+                                ? "Approve and add this reminder to Google Calendar"
+                                : "Connect Google Calendar before approving a reminder"
+                            }
+                          >
+                            {resolving ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <CalendarCheck2 size={16} />
+                            )}
+                            Approve and add to Google Calendar
+                          </button>
+
+                          <button
+                            onClick={() => void dismissJobCalendarProposal(proposal)}
+                            disabled={resolving}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2.5 text-sm font-bold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <X size={16} />
+                            Dismiss
+                          </button>
+                        </div>
+
+                        {!googleConnected && (
+                          <button
+                            onClick={connectGoogleCalendar}
+                            className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-3 py-2.5 text-sm font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950"
+                          >
+                            <Unplug size={16} />
+                            Connect Google to approve reminders
+                          </button>
+                        )}
+                      </article>
+                    );
+                  })
+                )}
+              </div>
+
+              {!jobProposalsLoading &&
+                jobCalendarProposals.some(
+                  (proposal) => proposal.status === "approved",
+                ) && (
+                  <div className="mt-4 rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                    <p className="font-semibold">Approved job reminders</p>
+                    {jobCalendarProposals
+                      .filter((proposal) => proposal.status === "approved")
+                      .map((proposal) => (
+                        <div
+                          key={proposal.id}
+                          className="mt-2 flex flex-wrap items-center justify-between gap-2"
+                        >
+                          <span>{proposal.title}</span>
+                          {proposal.google_calendar_url && (
+                            <a
+                              href={proposal.google_calendar_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-200 underline underline-offset-2"
+                            >
+                              Open in Calendar
+                              <ExternalLink size={13} />
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
             </section>
 
             <section className="rounded-2xl border border-amber-400/30 bg-amber-300/5 p-5">
@@ -1348,66 +2175,7 @@ export default function Home() {
 
                   {selectedEvent.approved && googleConnected && (
                     <button
-                      onClick={async () => {
-                        setSyncingGoogle(true);
-                        setNotice("");
-                        setSyncResult(null);
-
-                        try {
-                          const response = await fetch(
-                            `${API_URL}/api/google/calendar/sync-approved`,
-                            {
-                              method: "POST",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                event_ids: [selectedEvent.id],
-                              }),
-                            },
-                          );
-                          const data = (await response.json()) as
-                            | GoogleSyncResult
-                            | { detail?: string };
-
-                          if (!response.ok) {
-                            throw new Error(
-                              "detail" in data
-                                ? data.detail
-                                : "Google Calendar sync failed.",
-                            );
-                          }
-
-                          const result = data as GoogleSyncResult;
-                          setSyncResult(result);
-
-                          if (result.created.length > 0) {
-                            setNotice(
-                              `${selectedEvent.title} was added to Google Calendar.`,
-                            );
-                          } else if (result.updated.length > 0) {
-                            setNotice(
-                              `${selectedEvent.title} was updated in Google Calendar.`,
-                            );
-                          } else if (result.skipped.length > 0) {
-                            setNotice(
-                              result.skipped[0].reason ??
-                                "This deadline could not be synced.",
-                            );
-                          } else if (result.failed.length > 0) {
-                            setNotice(
-                              result.failed[0].reason ??
-                                "Google Calendar sync failed.",
-                            );
-                          }
-                        } catch (error) {
-                          setNotice(
-                            error instanceof Error
-                              ? error.message
-                              : "Google Calendar sync failed.",
-                          );
-                        } finally {
-                          setSyncingGoogle(false);
-                        }
-                      }}
+                      onClick={() => void syncSelectedEventToGoogle(selectedEvent)}
                       disabled={syncingGoogle}
                       className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                     >
