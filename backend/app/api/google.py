@@ -1,10 +1,16 @@
 ﻿from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
+from googleapiclient.discovery import build
+from pydantic import BaseModel, Field
 
+from app.api.demo import DEMO_WORKSPACE
+from app.schemas.events import AcademicEvent
 from app.services.google_oauth import (
-    TOKEN_PATH,
     create_flow,
     get_credentials,
     save_credentials,
@@ -13,9 +19,185 @@ from app.services.google_oauth import (
 
 router = APIRouter(prefix="/google", tags=["google"])
 
-# Local-development storage only. Uvicorn restart clears it; simply restart
-# authorization if that happens. Use session/database/Redis storage in production.
-oauth_flows = {}
+# Local-development storage only. It is cleared when Uvicorn restarts.
+# Production should use a signed session plus durable server-side storage.
+oauth_flows: dict[str, Any] = {}
+
+
+class GoogleCalendarSyncRequest(BaseModel):
+    """
+    If event_ids is omitted or empty, sync every currently eligible event.
+    Eligible events must be approved and have verified/updated status.
+    """
+
+    event_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional DueScope event IDs to sync. Omit or provide an empty "
+            "array to sync every approved verified/updated event."
+        ),
+    )
+
+
+def get_workspace_event(event_id: str) -> AcademicEvent | None:
+    for stored_event in DEMO_WORKSPACE["events"]:
+        if stored_event["id"] == event_id:
+            return AcademicEvent.model_validate(stored_event)
+    return None
+
+
+def selected_workspace_events(
+    event_ids: list[str] | None,
+) -> tuple[list[AcademicEvent], list[dict[str, str]]]:
+    """
+    Returns selected events and explicit not-found failures.
+
+    If no IDs are supplied, return all workspace events and let eligibility
+    checks decide which records are skipped.
+    """
+    if not event_ids:
+        return (
+            [
+                AcademicEvent.model_validate(event)
+                for event in DEMO_WORKSPACE["events"]
+            ],
+            [],
+        )
+
+    events: list[AcademicEvent] = []
+    failures: list[dict[str, str]] = []
+
+    for event_id in event_ids:
+        event = get_workspace_event(event_id)
+        if event is None:
+            failures.append(
+                {
+                    "event_id": event_id,
+                    "reason": "DueScope event was not found.",
+                }
+            )
+            continue
+
+        events.append(event)
+
+    return events, failures
+
+
+def course_name_for_event(event: AcademicEvent) -> str:
+    for course in DEMO_WORKSPACE["courses"]:
+        if course["id"] == event.course_id:
+            return str(course["name"])
+
+    return event.course_id
+
+
+def source_for_event(event: AcademicEvent) -> dict[str, Any] | None:
+    for source in DEMO_WORKSPACE["sources"]:
+        if source["id"] == event.source_id:
+            return source
+
+    return None
+
+
+def event_description(event: AcademicEvent) -> str:
+    """
+    Build a human-readable Calendar description that preserves DueScope
+    provenance without exposing OAuth secrets.
+    """
+    course_name = course_name_for_event(event)
+    source = source_for_event(event)
+
+    lines = [
+        "Created by DueScope.",
+        "",
+        f"Course: {course_name}",
+        f"DueScope event ID: {event.id}",
+        f"Status: {event.status}",
+        f"Approved for sync: {event.approved}",
+    ]
+
+    if source is not None:
+        lines.extend(
+            [
+                "",
+                "Evidence",
+                f"Source type: {source.get('type', 'unknown')}",
+                f"Source title: {source.get('title', 'Untitled source')}",
+            ]
+        )
+
+        source_url = source.get("url")
+        if source_url:
+            lines.append(f"Source URL: {source_url}")
+
+        excerpt = source.get("excerpt") or source.get("content")
+        if excerpt:
+            lines.extend(
+                [
+                    "",
+                    "Source excerpt:",
+                    str(excerpt).strip(),
+                ]
+            )
+
+    return "\n".join(lines)
+
+
+def calendar_event_body(event: AcademicEvent) -> dict[str, Any]:
+    """
+    Calendar deadlines use a 30-minute block ending at the DueScope due_at
+    timestamp. This keeps the Calendar event visibly time-bound while making
+    the deadline time its ending time.
+    """
+    due_at = event.due_at
+    start_at = due_at - timedelta(minutes=30)
+
+    time_zone = (
+        getattr(due_at.tzinfo, "key", None)
+        or str(due_at.tzinfo)
+        or "America/Chicago"
+    )
+
+    return {
+        "summary": event.title,
+        "description": event_description(event),
+        "start": {
+            "dateTime": start_at.isoformat(),
+            "timeZone": time_zone,
+        },
+        "end": {
+            "dateTime": due_at.isoformat(),
+            "timeZone": time_zone,
+        },
+        "extendedProperties": {
+            "private": {
+                "duescope_event_id": event.id,
+                "duescope_source_id": event.source_id,
+                "duescope_status": str(event.status),
+            }
+        },
+    }
+
+
+def find_google_event_for_duescope_event(
+    service: Any,
+    duescope_event_id: str,
+) -> dict[str, Any] | None:
+    """
+    Find an existing Calendar event created for this DueScope event.
+
+    Google Calendar's private extended properties let the app use its own
+    stable DueScope event ID as the cross-system mapping key.
+    """
+    response = service.events().list(
+        calendarId="primary",
+        privateExtendedProperty=f"duescope_event_id={duescope_event_id}",
+        singleEvents=True,
+        maxResults=10,
+    ).execute()
+
+    items = response.get("items", [])
+    return items[0] if items else None
 
 
 @router.get("/auth/start")
@@ -93,51 +275,99 @@ def google_auth_status() -> dict[str, bool]:
     except HTTPException:
         return {"connected": False}
 
+
 @router.post("/calendar/sync-approved")
-def sync_approved_deadlines() -> dict:
+def sync_approved_deadlines(
+    request: GoogleCalendarSyncRequest,
+) -> dict[str, list[dict[str, str]]]:
     """
-    Temporary Phase 4 verification endpoint.
+    Create or update Google Calendar events for approved trusted DueScope
+    deadlines.
 
-    Creates one clearly labeled test event in the connected user's primary
-    Google Calendar. Replace the hard-coded event with approved DueScope
-    deadlines once the event model is wired in.
+    This endpoint does not sync candidates, unresolved proposals, unapproved
+    events, needs_review events, or canceled events.
     """
-    from datetime import datetime, timedelta
-    from zoneinfo import ZoneInfo
-
-    from googleapiclient.discovery import build
-
     credentials = get_credentials()
     service = build("calendar", "v3", credentials=credentials)
 
-    central = ZoneInfo("America/Chicago")
-    start = datetime.now(central) + timedelta(hours=1)
-    end = start + timedelta(minutes=30)
+    events, failed = selected_workspace_events(request.event_ids)
 
-    event_body = {
-        "summary": "DueScope test sync",
-        "description": (
-            "Created by DueScope Phase 4 Google Calendar integration. "
-            "You can delete this test event after verifying the sync."
-        ),
-        "start": {
-            "dateTime": start.isoformat(),
-            "timeZone": "America/Chicago",
-        },
-        "end": {
-            "dateTime": end.isoformat(),
-            "timeZone": "America/Chicago",
-        },
-    }
+    created: list[dict[str, str]] = []
+    updated: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
 
-    created_event = service.events().insert(
-        calendarId="primary",
-        body=event_body,
-    ).execute()
+    for event in events:
+        if not event.approved:
+            skipped.append(
+                {
+                    "event_id": event.id,
+                    "title": event.title,
+                    "reason": "Event is not approved for calendar sync.",
+                }
+            )
+            continue
+
+        if event.status not in {"verified", "updated"}:
+            skipped.append(
+                {
+                    "event_id": event.id,
+                    "title": event.title,
+                    "reason": (
+                        "Only verified or updated events can sync to "
+                        "Google Calendar."
+                    ),
+                }
+            )
+            continue
+
+        try:
+            body = calendar_event_body(event)
+            existing_google_event = find_google_event_for_duescope_event(
+                service,
+                event.id,
+            )
+
+            if existing_google_event is None:
+                saved_event = service.events().insert(
+                    calendarId="primary",
+                    body=body,
+                ).execute()
+
+                created.append(
+                    {
+                        "event_id": event.id,
+                        "title": event.title,
+                        "google_event_id": saved_event["id"],
+                        "calendar_url": saved_event.get("htmlLink", ""),
+                    }
+                )
+            else:
+                saved_event = service.events().update(
+                    calendarId="primary",
+                    eventId=existing_google_event["id"],
+                    body=body,
+                ).execute()
+
+                updated.append(
+                    {
+                        "event_id": event.id,
+                        "title": event.title,
+                        "google_event_id": saved_event["id"],
+                        "calendar_url": saved_event.get("htmlLink", ""),
+                    }
+                )
+        except Exception as exc:
+            failed.append(
+                {
+                    "event_id": event.id,
+                    "title": event.title,
+                    "reason": str(exc),
+                }
+            )
 
     return {
-        "success": True,
-        "message": "Test event created in your primary Google Calendar.",
-        "event_id": created_event["id"],
-        "event_url": created_event.get("htmlLink"),
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
     }
