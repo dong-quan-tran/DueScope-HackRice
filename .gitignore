@@ -51,3 +51,18 @@ Thumbs.db
 *.bak
 
 *.ics
+# Google OAuth local credentials and generated tokens
+backend/credentials.json
+backend/token.json
+
+# Google OAuth local secrets/tokens
+backend/credentials.json
+backend/token.json
+
+# Google OAuth secrets
+backend/credentials.json
+backend/token.json
+
+# Google OAuth secrets
+backend/credentials.json
+backend/token.json

@@ -2,7 +2,7 @@
 
 DueScope is an evidence-backed academic deadline manager built for HackRice 16's Work & Productivity track.
 
-Students receive deadlines through Canvas, announcements, emails, syllabi, and class messages. DueScope turns those sources into a reviewable deadline workflow: it extracts candidate deadlines, validates evidence and timezones, detects conflicts with saved events, and exports approved deadlines as a calendar file.
+Students receive deadlines through Canvas, announcements, emails, syllabi, and class messages. DueScope turns those sources into a reviewable deadline workflow: it extracts candidate deadlines, validates evidence and timezones, detects conflicts with saved events, and exports approved deadlines as an ICS calendar file. It also supports optional Google OAuth and a verified Google Calendar test-sync integration for local development.
 
 ## Core idea
 
@@ -30,12 +30,14 @@ Reconciliation with saved events
                 +-- Same date: leave event unchanged
                 |
                 +-- Different date: create a proposal
-                                      |
-                                      v
-                     User accepts or rejects the proposal
-                                      |
-                                      v
+                                  |
+                                  v
+                    User accepts or rejects the proposal
+                                  |
+                                  v
                     Approve trusted events and export ICS
+                                  |
+                                  +-- Optional Google Calendar test sync
 ```
 
 When a user accepts a proposal, DueScope preserves the old deadline in history, applies the new source evidence and date, marks the event as `updated`, and resets calendar approval. A rejected proposal leaves the saved event unchanged.
@@ -54,10 +56,12 @@ DueScope is a working full-stack MVP with:
 - Explicit proposal accept and reject actions
 - Preserved event history after accepted changes
 - Approval-gated ICS calendar export
+- Google OAuth connection flow with PKCE
+- Google Calendar event creation for connected users through a local test-sync endpoint
 - High-workload alert display
 - Automated validation and reconciliation tests
 
-The application currently uses in-memory demo storage. Restarting the backend resets seeded events, imported records, proposals, approvals, and accepted changes.
+The application currently uses in-memory demo storage. Restarting the backend resets seeded events, imported records, proposals, approvals, and accepted changes. Google OAuth tokens are stored locally for development in `backend/token.json` and remain available across backend restarts unless removed.
 
 ## Features
 
@@ -156,7 +160,7 @@ DueScope can:
 
 Canvas access requires valid local Canvas configuration.
 
-### Calendar export
+### Calendar export and Google sync
 
 Only events that are both:
 
@@ -167,6 +171,10 @@ can be exported.
 
 DueScope generates a standard `.ics` file that can be imported into compatible calendar applications.
 
+DueScope can also connect to a user's Google account through OAuth and create Calendar events in the user's primary Google Calendar. Google authorization uses PKCE and stores the local OAuth token in `backend/token.json`.
+
+The current Google Calendar route is a Phase 4 local-development integration test. It creates a clearly labeled `DueScope test sync` event so developers can verify OAuth credentials and Google Calendar API access. A future iteration will sync selected approved DueScope deadlines, persist Google event IDs, and avoid duplicate calendar events.
+
 ## Tech stack
 
 | Area | Technology |
@@ -176,6 +184,8 @@ DueScope generates a standard `.ics` file that can be imported into compatible c
 | Backend | Python, FastAPI, Pydantic |
 | Testing | pytest |
 | Calendar export | icalendar |
+| Google integration | Google OAuth 2.0 with PKCE, Google Calendar API |
+| OAuth token storage | Local `backend/token.json` for development |
 | Local AI extraction | Ollama with Gemma 3 |
 | Optional cloud AI | Google Gemini API |
 | Course ingestion | Canvas REST API |
@@ -209,7 +219,7 @@ Install Ollama from [ollama.com](https://ollama.com/) if it is not already avail
 ### 1. Clone the repository
 
 ```powershell
-git clone [https://github.com/OWNER/DueScope.git](https://github.com/OWNER/DueScope.git)
+git clone https://github.com/OWNER/DueScope.git
 cd DueScope
 ```
 
@@ -234,6 +244,12 @@ Your prompt should show:
 ```powershell
 python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
+```
+
+If Google Calendar dependencies are not already included in `backend/requirements.txt`, install them with:
+
+```powershell
+python -m pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 ```
 
 ### 4. Install frontend dependencies
@@ -292,6 +308,53 @@ Optional Canvas configuration:
 ```text
 CANVAS_BASE_URL=
 CANVAS_ACCESS_TOKEN=
+```
+
+### 5a. Configure Google Calendar sync (optional)
+
+Google Calendar sync requires a Google Cloud OAuth client and the Google Calendar API.
+
+1. In Google Cloud Console, create or select a project.
+2. Enable the **Google Calendar API**.
+3. Configure the OAuth consent screen and add your Google account as a test user if the app is in Testing mode.
+4. Create an OAuth 2.0 **Web application** client.
+5. Add this exact authorized redirect URI:
+
+   ```text
+   http://127.0.0.1:8001/api/google/auth/callback
+   ```
+
+6. Download the OAuth client JSON and save it as:
+
+   ```text
+   backend/credentials.json
+   ```
+
+7. Ensure these local secret/token files are Git-ignored:
+
+   ```text
+   backend/credentials.json
+   backend/token.json
+   ```
+
+After starting the backend, begin Google authorization in a browser:
+
+```text
+http://127.0.0.1:8001/api/google/auth/start
+```
+
+After authorization succeeds, verify the connection:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/api/google/auth/status
+```
+
+Expected result:
+
+```text
+connected
+---------
+True
 ```
 
 ### 6. Start Ollama
@@ -385,6 +448,29 @@ For the most reliable demo, start from a freshly restarted backend so the seeded
 
 To demonstrate rejection, scan a conflicting Sept. 22 source update and select **Keep saved date**. The Sept. 21 canonical deadline remains unchanged.
 
+### Google Calendar test-sync demo
+
+1. Start the backend and open `http://127.0.0.1:8001/api/google/auth/start` in a browser.
+2. Sign in with Google and approve the requested permissions.
+3. Confirm the callback page says **Google connected successfully**.
+4. Verify the connection:
+
+   ```powershell
+   Invoke-RestMethod http://127.0.0.1:8001/api/google/auth/status
+   ```
+
+5. Call the test-sync route:
+
+   ```powershell
+   Invoke-RestMethod `
+     -Method Post `
+     -Uri "http://127.0.0.1:8001/api/google/calendar/sync-approved"
+   ```
+
+6. Open Google Calendar and verify that a `DueScope test sync` event appears in the connected account's primary calendar.
+
+Delete the test event after the demonstration if desired.
+
 ## API reference
 
 | Method | Endpoint | Purpose |
@@ -405,6 +491,10 @@ To demonstrate rejection, scan a conflicting Sept. 22 source update and select *
 | `GET` | `/api/canvas/courses/{course_id}/assignments` | List Canvas assignments |
 | `POST` | `/api/canvas/import-course/{course_id}` | Import Canvas deadlines |
 | `POST` | `/api/calendar/export` | Export approved events as ICS |
+| `GET` | `/api/google/auth/start` | Start Google OAuth authorization |
+| `GET` | `/api/google/auth/callback` | Receive the Google OAuth callback and save local credentials |
+| `GET` | `/api/google/auth/status` | Check whether Google Calendar is connected |
+| `POST` | `/api/google/calendar/sync-approved` | Create a Google Calendar test-sync event for the connected user |
 
 ## Useful API checks
 
@@ -464,6 +554,40 @@ A successful export begins with:
 BEGIN:VCALENDAR
 ```
 
+### Google Calendar connection status
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8001/api/google/auth/status
+```
+
+Before authorization, expected output:
+
+```text
+connected
+---------
+False
+```
+
+After authorization, expected output:
+
+```text
+connected
+---------
+True
+```
+
+### Google Calendar test sync
+
+After connecting Google, create a test event:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "http://127.0.0.1:8001/api/google/calendar/sync-approved"
+```
+
+A successful response contains `success: true`, an event ID, and a Google Calendar event URL. Confirm that a clearly labeled `DueScope test sync` event appears in the connected account's primary Google Calendar.
+
 ## Project structure
 
 ```text
@@ -475,6 +599,7 @@ DueScope/
 │   │   │   ├── canvas.py
 │   │   │   ├── demo.py
 │   │   │   ├── events.py
+│   │   │   ├── google.py
 │   │   │   └── sources.py
 │   │   ├── schemas/
 │   │   │   ├── events.py
@@ -483,8 +608,11 @@ DueScope/
 │   │   │   ├── canvas.py
 │   │   │   ├── deadline_validation.py
 │   │   │   ├── gemini_extraction.py
+│   │   │   ├── google_oauth.py
 │   │   │   └── reconciliation.py
 │   │   └── main.py
+│   ├── credentials.json          # local only; Git-ignored
+│   ├── token.json                # local only; Git-ignored
 │   ├── tests/
 │   │   ├── test_deadline_validation.py
 │   │   └── test_reconciliation.py
@@ -529,7 +657,7 @@ git status
 
 ## Repository rules
 
-- Do not commit `.env`, API keys, Canvas tokens, local databases, virtual environments, or generated ICS files.
+- Do not commit `.env`, API keys, Canvas tokens, Google OAuth credentials, OAuth token files, local databases, virtual environments, or generated ICS files.
 - Do not commit `frontend\node_modules` or `frontend\.next`.
 - Save source and documentation files as UTF-8.
 - Run backend tests and the frontend production build before merging.
@@ -537,17 +665,18 @@ git status
 
 ## Current limitations
 
-- All application data is in memory and resets when the backend restarts.
+- All DueScope workspace data is in memory and resets when the backend restarts.
 - Canvas import requires valid Canvas API configuration.
 - Ollama must be installed and running for local AI scanning.
 - Gemini is optional and requires a funded project with usable API credits.
-- ICS export is supported, but direct Google Calendar sync is not implemented.
+- Google OAuth and a Google Calendar test-sync endpoint are implemented locally.
+- The current Google Calendar route creates a test event; syncing selected approved DueScope deadlines with deduplication and update behavior is future work.
 - Gmail ingestion, persistent storage, scheduled sync, workload forecasting, deployment, and a custom domain are future work.
 
 ## Team
 
 - Khoi Anh Le Nguyen - [@ngkhoi111](https://github.com/ngkhoi111)
-- Gail Le - [@dong-quan-tran](https://github.com/dong-quan-tran)
+- Dong Quan Tran - [@dong-quan-tran](https://github.com/dong-quan-tran)
 
 ## HackRice 16
 
