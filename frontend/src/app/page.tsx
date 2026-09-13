@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  CalendarCheck2,
   CalendarDays,
   Check,
   ChevronRight,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Unplug,
   X,
 } from "lucide-react";
 
@@ -110,6 +112,25 @@ type CanvasCourse = {
   name: string;
 };
 
+type GoogleAuthStatus = {
+  connected: boolean;
+};
+
+type GoogleSyncItem = {
+  event_id: string;
+  title: string;
+  google_event_id?: string;
+  calendar_url?: string;
+  reason?: string;
+};
+
+type GoogleSyncResult = {
+  created: GoogleSyncItem[];
+  updated: GoogleSyncItem[];
+  skipped: GoogleSyncItem[];
+  failed: GoogleSyncItem[];
+};
+
 const seedAnnouncement = `Programming Assignment 2 has been extended.
 It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.`;
 
@@ -151,6 +172,10 @@ function actionLabel(action: string) {
   return action.replaceAll("_", " ");
 }
 
+function syncItemSummary(items: GoogleSyncItem[]) {
+  return items.map((item) => item.title).join(", ");
+}
+
 export default function Home() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<AcademicEvent | null>(null);
@@ -169,11 +194,24 @@ export default function Home() {
   const [canvasLoading, setCanvasLoading] = useState(false);
   const [canvasImporting, setCanvasImporting] = useState(false);
   const [resolvingProposalId, setResolvingProposalId] = useState("");
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleStatusLoading, setGoogleStatusLoading] = useState(true);
+  const [syncingGoogle, setSyncingGoogle] = useState(false);
+  const [syncResult, setSyncResult] = useState<GoogleSyncResult | null>(null);
 
   const coursesById = useMemo(
     () =>
       Object.fromEntries(
         (workspace?.courses ?? []).map((course) => [course.id, course]),
+      ),
+    [workspace],
+  );
+
+  const approvedSyncableEvents = useMemo(
+    () =>
+      (workspace?.events ?? []).filter(
+        (event) =>
+          event.approved && ["verified", "updated"].includes(event.status),
       ),
     [workspace],
   );
@@ -211,8 +249,38 @@ export default function Home() {
     }
   }
 
+  async function loadGoogleStatus(showError = false) {
+    setGoogleStatusLoading(true);
+
+    try {
+      const response = await fetch(`${API_URL}/api/google/auth/status`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not check Google Calendar connection.");
+      }
+
+      const data = (await response.json()) as GoogleAuthStatus;
+      setGoogleConnected(data.connected);
+    } catch (error) {
+      setGoogleConnected(false);
+
+      if (showError) {
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Could not check Google Calendar connection.",
+        );
+      }
+    } finally {
+      setGoogleStatusLoading(false);
+    }
+  }
+
   useEffect(() => {
     void loadWorkspace();
+    void loadGoogleStatus();
   }, []);
 
   async function loadCanvasCourses() {
@@ -414,7 +482,7 @@ export default function Home() {
       setNotice(
         `${event.title} ${
           event.approved ? "removed from" : "approved for"
-        } calendar export.`,
+        } calendar export and Google Calendar sync.`,
       );
     } catch (error) {
       setNotice(
@@ -424,13 +492,7 @@ export default function Home() {
   }
 
   async function exportCalendar() {
-    const eventIds = (workspace?.events ?? [])
-      .filter(
-        (event) =>
-          event.approved &&
-          ["verified", "updated"].includes(event.status),
-      )
-      .map((event) => event.id);
+    const eventIds = approvedSyncableEvents.map((event) => event.id);
 
     if (eventIds.length === 0) {
       setNotice(
@@ -477,6 +539,73 @@ export default function Home() {
     }
   }
 
+  function connectGoogleCalendar() {
+    window.location.assign(`${API_URL}/api/google/auth/start`);
+  }
+
+  async function syncApprovedToGoogle() {
+    if (!googleConnected) {
+      setNotice("Connect Google Calendar before syncing deadlines.");
+      return;
+    }
+
+    if (approvedSyncableEvents.length === 0) {
+      setNotice(
+        "Approve at least one verified or updated deadline before syncing to Google Calendar.",
+      );
+      return;
+    }
+
+    setSyncingGoogle(true);
+    setNotice("");
+    setSyncResult(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/google/calendar/sync-approved`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event_ids: approvedSyncableEvents.map((event) => event.id),
+          }),
+        },
+      );
+
+      const data = (await response.json()) as GoogleSyncResult | { detail?: string };
+
+      if (!response.ok) {
+        throw new Error(
+          "detail" in data ? data.detail : "Google Calendar sync failed.",
+        );
+      }
+
+      const result = data as GoogleSyncResult;
+      setSyncResult(result);
+
+      const resultMessage = [
+        result.created.length ? `${result.created.length} created` : "",
+        result.updated.length ? `${result.updated.length} updated` : "",
+        result.skipped.length ? `${result.skipped.length} skipped` : "",
+        result.failed.length ? `${result.failed.length} failed` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+
+      setNotice(
+        resultMessage
+          ? `Google Calendar sync complete: ${resultMessage}.`
+          : "Google Calendar sync finished with no eligible events.",
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Google Calendar sync failed.",
+      );
+    } finally {
+      setSyncingGoogle(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-950 text-white">
@@ -514,18 +643,40 @@ export default function Home() {
             </p>
           </div>
 
-          <button
-            onClick={exportCalendar}
-            disabled={exporting}
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {exporting ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <CalendarDays size={18} />
-            )}
-            Export approved calendar
-          </button>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <button
+              onClick={() => void syncApprovedToGoogle()}
+              disabled={syncingGoogle || googleStatusLoading || !googleConnected}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-400/70 px-4 py-3 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+              title={
+                googleConnected
+                  ? "Sync approved trusted deadlines to Google Calendar"
+                  : "Connect Google Calendar before syncing"
+              }
+            >
+              {syncingGoogle ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <CalendarCheck2 size={18} />
+              )}
+              {syncingGoogle
+                ? "Syncing Google..."
+                : `Sync Google (${approvedSyncableEvents.length})`}
+            </button>
+
+            <button
+              onClick={exportCalendar}
+              disabled={exporting}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-cyan-400 px-4 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {exporting ? (
+                <Loader2 size={18} className="animate-spin" />
+              ) : (
+                <CalendarDays size={18} />
+              )}
+              Export approved calendar
+            </button>
+          </div>
         </header>
 
         {notice && (
@@ -609,6 +760,11 @@ export default function Home() {
                             >
                               {actionLabel(event.status)}
                             </span>
+                            {event.approved && (
+                              <span className="rounded-full border border-cyan-400/40 bg-cyan-400/10 px-2 py-0.5 text-xs font-semibold text-cyan-200">
+                                Approved
+                              </span>
+                            )}
                           </div>
 
                           <p className="mt-1 text-sm text-slate-400">
@@ -763,6 +919,152 @@ export default function Home() {
           </section>
 
           <aside className="space-y-7">
+            <section className="rounded-2xl border border-emerald-400/30 bg-emerald-300/5 p-5">
+              <div className="flex items-start gap-3">
+                <CalendarCheck2 className="mt-0.5 shrink-0 text-emerald-300" size={20} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-xl font-bold">Google Calendar</h2>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Sync only deadlines you explicitly approve.
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => void loadGoogleStatus(true)}
+                      disabled={googleStatusLoading}
+                      className="rounded-lg border border-slate-700 p-2 text-slate-300 transition hover:border-emerald-400 hover:text-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="Refresh Google Calendar status"
+                      aria-label="Refresh Google Calendar status"
+                    >
+                      <RefreshCw
+                        size={16}
+                        className={googleStatusLoading ? "animate-spin" : ""}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950/70 p-3">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Connection status
+                    </p>
+                    <p
+                      className={`mt-1 text-sm font-semibold ${
+                        googleConnected ? "text-emerald-300" : "text-amber-300"
+                      }`}
+                    >
+                      {googleStatusLoading
+                        ? "Checking connection..."
+                        : googleConnected
+                          ? "Connected to Google Calendar"
+                          : "Not connected"}
+                    </p>
+                  </div>
+
+                  {googleConnected ? (
+                    <button
+                      onClick={() => void syncApprovedToGoogle()}
+                      disabled={syncingGoogle || approvedSyncableEvents.length === 0}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {syncingGoogle ? (
+                        <Loader2 size={18} className="animate-spin" />
+                      ) : (
+                        <CalendarCheck2 size={18} />
+                      )}
+                      {syncingGoogle
+                        ? "Syncing approved deadlines..."
+                        : `Sync ${approvedSyncableEvents.length} approved deadline${
+                            approvedSyncableEvents.length === 1 ? "" : "s"
+                          }`}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={connectGoogleCalendar}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-emerald-300"
+                    >
+                      <CalendarCheck2 size={18} />
+                      Connect Google Calendar
+                    </button>
+                  )}
+
+                  {googleConnected && approvedSyncableEvents.length === 0 && (
+                    <p className="mt-3 text-sm text-slate-500">
+                      Approve a verified or updated deadline to enable sync.
+                    </p>
+                  )}
+
+                  {syncResult && (
+                    <div className="mt-4 space-y-3">
+                      {syncResult.created.length > 0 && (
+                        <div className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                          <p className="font-bold">
+                            Created: {syncItemSummary(syncResult.created)}
+                          </p>
+                          {syncResult.created.map((item) =>
+                            item.calendar_url ? (
+                              <a
+                                key={item.event_id}
+                                href={item.calendar_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 block text-xs text-emerald-200 underline underline-offset-2"
+                              >
+                                Open {item.title} in Google Calendar
+                              </a>
+                            ) : null,
+                          )}
+                        </div>
+                      )}
+
+                      {syncResult.updated.length > 0 && (
+                        <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-3 text-sm text-cyan-100">
+                          <p className="font-bold">
+                            Updated: {syncItemSummary(syncResult.updated)}
+                          </p>
+                          {syncResult.updated.map((item) =>
+                            item.calendar_url ? (
+                              <a
+                                key={item.event_id}
+                                href={item.calendar_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-1 block text-xs text-cyan-200 underline underline-offset-2"
+                              >
+                                Open {item.title} in Google Calendar
+                              </a>
+                            ) : null,
+                          )}
+                        </div>
+                      )}
+
+                      {syncResult.skipped.length > 0 && (
+                        <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-100">
+                          <p className="font-bold">Skipped deadlines</p>
+                          {syncResult.skipped.map((item) => (
+                            <p key={item.event_id} className="mt-1 text-xs">
+                              {item.title}: {item.reason ?? "Not eligible for sync."}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      {syncResult.failed.length > 0 && (
+                        <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3 text-sm text-rose-100">
+                          <p className="font-bold">Sync errors</p>
+                          {syncResult.failed.map((item) => (
+                            <p key={item.event_id} className="mt-1 text-xs">
+                              {item.title}: {item.reason ?? "Unknown sync error."}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+
             <section className="rounded-2xl border border-amber-400/30 bg-amber-300/5 p-5">
               <div className="flex items-start gap-2">
                 <ShieldCheck className="mt-0.5 shrink-0 text-amber-300" size={20} />
@@ -980,8 +1282,92 @@ export default function Home() {
                     <Check size={17} />
                     {selectedEvent.approved
                       ? "Remove approval"
-                      : "Approve for export"}
+                      : "Approve for export and sync"}
                   </button>
+
+                  {selectedEvent.approved && googleConnected && (
+                    <button
+                      onClick={async () => {
+                        setSyncingGoogle(true);
+                        setNotice("");
+                        setSyncResult(null);
+
+                        try {
+                          const response = await fetch(
+                            `${API_URL}/api/google/calendar/sync-approved`,
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                event_ids: [selectedEvent.id],
+                              }),
+                            },
+                          );
+                          const data = (await response.json()) as
+                            | GoogleSyncResult
+                            | { detail?: string };
+
+                          if (!response.ok) {
+                            throw new Error(
+                              "detail" in data
+                                ? data.detail
+                                : "Google Calendar sync failed.",
+                            );
+                          }
+
+                          const result = data as GoogleSyncResult;
+                          setSyncResult(result);
+
+                          if (result.created.length > 0) {
+                            setNotice(
+                              `${selectedEvent.title} was added to Google Calendar.`,
+                            );
+                          } else if (result.updated.length > 0) {
+                            setNotice(
+                              `${selectedEvent.title} was updated in Google Calendar.`,
+                            );
+                          } else if (result.skipped.length > 0) {
+                            setNotice(
+                              result.skipped[0].reason ??
+                                "This deadline could not be synced.",
+                            );
+                          } else if (result.failed.length > 0) {
+                            setNotice(
+                              result.failed[0].reason ??
+                                "Google Calendar sync failed.",
+                            );
+                          }
+                        } catch (error) {
+                          setNotice(
+                            error instanceof Error
+                              ? error.message
+                              : "Google Calendar sync failed.",
+                          );
+                        } finally {
+                          setSyncingGoogle(false);
+                        }
+                      }}
+                      disabled={syncingGoogle}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {syncingGoogle ? (
+                        <Loader2 size={17} className="animate-spin" />
+                      ) : (
+                        <CalendarCheck2 size={17} />
+                      )}
+                      Sync this deadline to Google
+                    </button>
+                  )}
+
+                  {selectedEvent.approved && !googleConnected && (
+                    <button
+                      onClick={connectGoogleCalendar}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-400/60 px-4 py-2.5 font-bold text-emerald-200 transition hover:bg-emerald-400 hover:text-slate-950"
+                    >
+                      <Unplug size={17} />
+                      Connect Google to sync
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="mt-4 rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
@@ -1001,7 +1387,7 @@ export default function Home() {
                 <li>1. Import Canvas work or scan course information.</li>
                 <li>2. AI extracts source-backed deadline candidates.</li>
                 <li>3. DueScope validates evidence and proposes date conflicts.</li>
-                <li>4. Accept trusted changes, then approve and export events.</li>
+                <li>4. Accept trusted changes, approve events, then export or sync them.</li>
               </ol>
             </section>
           </aside>
