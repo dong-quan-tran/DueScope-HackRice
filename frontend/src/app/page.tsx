@@ -110,6 +110,15 @@ type CanvasCourse = {
   name: string;
 };
 
+type DeadlineFilter = "7" | "14" | "30" | "all";
+
+const DEADLINE_FILTERS: Array<{ value: DeadlineFilter; label: string }> = [
+  { value: "7", label: "Next 7 days" },
+  { value: "14", label: "Next 14 days" },
+  { value: "30", label: "Next 30 days" },
+  { value: "all", label: "All semester" },
+];
+
 const seedAnnouncement = `Programming Assignment 2 has been extended.
 It is now due Monday, September 21, 2026 at 11:59 PM in Canvas.`;
 
@@ -166,6 +175,10 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [canvasCourses, setCanvasCourses] = useState<CanvasCourse[]>([]);
   const [canvasCourseId, setCanvasCourseId] = useState("");
+  const [canvasFocusCourseId, setCanvasFocusCourseId] = useState<string | null>(
+    null,
+  );
+  const [deadlineFilter, setDeadlineFilter] = useState<DeadlineFilter>("14");
   const [canvasLoading, setCanvasLoading] = useState(false);
   const [canvasImporting, setCanvasImporting] = useState(false);
   const [resolvingProposalId, setResolvingProposalId] = useState("");
@@ -275,13 +288,18 @@ export default function Home() {
           ).length
         : 0;
 
-      setNotice(
-        `Processed ${data.imported_count} upcoming Canvas deadline(s). ` +
-          `${data.skipped_past_count} past deadline(s) skipped.` +
-          (proposalCount
-            ? ` ${proposalCount} change proposal(s) need review.`
-            : ""),
-      );
+      const importMessage = data.message
+        ? `${data.message} `
+        : `Processed ${data.imported_count} upcoming Canvas deadline(s). `;
+      const pastMessage = data.skipped_past_count
+        ? `${data.skipped_past_count} past deadline(s) skipped. `
+        : "";
+      const proposalMessage = proposalCount
+        ? `${proposalCount} change proposal(s) need review.`
+        : "";
+
+      setCanvasFocusCourseId(`canvas-${canvasCourseId}`);
+      setNotice(`${importMessage}${pastMessage}${proposalMessage}`.trim());
 
       await loadWorkspace(false);
     } catch (error) {
@@ -488,7 +506,26 @@ export default function Home() {
     );
   }
 
-  const events = workspace?.events ?? [];
+  const events = (workspace?.events ?? []).filter(
+    (event) =>
+      canvasFocusCourseId === null || event.course_id === canvasFocusCourseId,
+  );
+  const selectedFilter = DEADLINE_FILTERS.find(
+    (filter) => filter.value === deadlineFilter,
+  ) ?? DEADLINE_FILTERS[1];
+  const displayedEvents = events.filter((event) => {
+    if (!event.due_at) return false;
+
+    const dueAt = new Date(event.due_at);
+    if (Number.isNaN(dueAt.getTime())) return false;
+    if (deadlineFilter === "all") return true;
+
+    const now = new Date();
+    const end = new Date(now);
+    end.setDate(end.getDate() + Number(deadlineFilter));
+
+    return dueAt >= now && dueAt <= end;
+  });
   const proposals = (workspace?.proposals ?? []).filter(
     (proposal) => !proposal.resolved,
   );
@@ -562,8 +599,8 @@ export default function Home() {
                 <div>
                   <h2 className="text-xl font-bold">Upcoming deadlines</h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Click an event to inspect its evidence, history, and export
-                    approval.
+                    {selectedFilter.label} - {displayedEvents.length} displayed
+                    deadline{displayedEvents.length === 1 ? "" : "s"}
                   </p>
                 </div>
 
@@ -577,8 +614,31 @@ export default function Home() {
                 </button>
               </div>
 
+              <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <label
+                  htmlFor="deadline-filter"
+                  className="text-sm font-semibold text-slate-300"
+                >
+                  Show deadlines
+                </label>
+                <select
+                  id="deadline-filter"
+                  value={deadlineFilter}
+                  onChange={(event) =>
+                    setDeadlineFilter(event.target.value as DeadlineFilter)
+                  }
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 outline-none focus:border-cyan-400"
+                >
+                  {DEADLINE_FILTERS.map((filter) => (
+                    <option key={filter.value} value={filter.value}>
+                      {filter.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="space-y-3">
-                {events
+                {displayedEvents
                   .slice()
                   .sort((a, b) =>
                     (a.due_at ?? "9999").localeCompare(b.due_at ?? "9999"),
@@ -625,10 +685,11 @@ export default function Home() {
                     );
                   })}
 
-                {events.length === 0 && (
+                {displayedEvents.length === 0 && (
                   <div className="rounded-xl border border-dashed border-slate-700 p-5 text-sm text-slate-500">
-                    No deadlines yet. Import Canvas assignments or scan a course
-                    update to get started.
+                    No deadlines due {deadlineFilter === "all"
+                      ? "in this semester"
+                      : `in the next ${deadlineFilter} days`}.
                   </div>
                 )}
               </div>
