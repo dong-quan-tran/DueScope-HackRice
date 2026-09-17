@@ -872,3 +872,4 @@ git status
 ## HackRice 16
 
 DueScope is built for the HackRice 16 Work & Productivity track.
+Will keep working on it.
