@@ -1,8 +1,11 @@
-﻿from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from app.db.session import get_db
+from app.services.demo_workspace import persistent_demo_workspace
 
 
 router = APIRouter(tags=["demo"])
-
 
 DEMO_WORKSPACE = {
     "student": {
@@ -231,5 +234,5 @@ DEMO_WORKSPACE = {
 
 
 @router.get("/demo/workspace")
-def get_demo_workspace() -> dict:
-    return DEMO_WORKSPACE
+def get_demo_workspace(db: Session = Depends(get_db)) -> dict:
+    return persistent_demo_workspace(db)
