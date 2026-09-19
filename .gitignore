@@ -1,68 +1,39 @@
-﻿# Environment variables and secrets
+# Local environment files and secrets
 .env
 .env.*
 !.env.example
+frontend/.env.local
+backend/.env
 
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.so
 .venv/
-venv/
-env/
+backend/.venv/
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-coverage/
+.coverage
 htmlcov/
-*.coverage
+
+# Local databases and generated artifacts
 *.db
 *.sqlite
 *.sqlite3
+*.ics
+
+# Google OAuth credentials and tokens
+backend/credentials.json
+backend/token.json
+credentials.json
+token.json
 
 # Node / Next.js
+frontend/node_modules/
+frontend/.next/
 node_modules/
 .next/
-out/
-dist/
-build/
-coverage/
 
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# IDE and OS files
-.vscode/
-!.vscode/extensions.json
-!.vscode/settings.json
-.idea/
+# OS and editor files
 .DS_Store
 Thumbs.db
-
-# Temporary files
-*.tmp
-*.temp
-*.bak
-
-*.ics
-# Google OAuth local credentials and generated tokens
-backend/credentials.json
-backend/token.json
-
-# Google OAuth local secrets/tokens
-backend/credentials.json
-backend/token.json
-
-# Google OAuth secrets
-backend/credentials.json
-backend/token.json
-
-# Google OAuth secrets
-backend/credentials.json
-backend/token.json
+.vscode/
+.idea/
