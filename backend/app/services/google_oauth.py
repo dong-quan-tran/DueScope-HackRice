@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import hashlib
@@ -98,7 +98,7 @@ def create_flow() -> Flow:
     )
 
 
-def save_oauth_state(state: str) -> None:
+def save_oauth_state(state: str, code_verifier: str) -> None:
     now = datetime.now(timezone.utc)
 
     with SessionLocal() as db:
@@ -111,12 +111,13 @@ def save_oauth_state(state: str) -> None:
             OAuthState(
                 provider=PROVIDER,
                 state_hash=state_hash(state),
+                encrypted_code_verifier=encrypt(code_verifier),
             )
         )
         db.commit()
 
 
-def consume_oauth_state(state: str) -> bool:
+def consume_oauth_state(state: str) -> str | None:
     now = datetime.now(timezone.utc)
 
     with SessionLocal() as db:
@@ -128,16 +129,20 @@ def consume_oauth_state(state: str) -> bool:
         )
 
         if record is None:
-            return False
+            return None
 
+        created_at = record.created_at
+        code_verifier = decrypt(record.encrypted_code_verifier)
         db.delete(record)
         db.commit()
 
-    created_at = record.created_at
     if created_at.tzinfo is None:
         created_at = created_at.replace(tzinfo=timezone.utc)
 
-    return now - created_at <= OAUTH_STATE_TTL
+    if now - created_at > OAUTH_STATE_TTL:
+        return None
+
+    return code_verifier
 
 
 def save_credentials(credentials: Credentials) -> None:

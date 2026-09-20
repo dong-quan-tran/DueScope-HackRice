@@ -258,6 +258,7 @@ class OAuthState(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     state_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    encrypted_code_verifier: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

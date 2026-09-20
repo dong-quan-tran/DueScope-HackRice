@@ -322,7 +322,13 @@ def start_google_auth() -> RedirectResponse:
         prompt="consent",
     )
 
-    save_oauth_state(state)
+    if not flow.code_verifier:
+        raise HTTPException(
+            status_code=500,
+            detail="Google OAuth PKCE verifier was not generated.",
+        )
+
+    save_oauth_state(state, flow.code_verifier)
 
     return RedirectResponse(
         url=authorization_url,
@@ -341,7 +347,9 @@ def google_auth_callback(
             detail="Missing OAuth state. Start Google authorization again.",
         )
 
-    if not consume_oauth_state(state):
+    code_verifier = consume_oauth_state(state)
+
+    if not code_verifier:
         raise HTTPException(
             status_code=400,
             detail=(
@@ -351,6 +359,7 @@ def google_auth_callback(
         )
 
     flow = create_flow()
+    flow.code_verifier = code_verifier
 
     try:
         flow.fetch_token(code=code)
