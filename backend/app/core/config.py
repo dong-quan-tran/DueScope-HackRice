@@ -19,16 +19,25 @@ class Settings(BaseSettings):
 
     api_public_url: str = "http://127.0.0.1:8001"
     public_app_url: str = "http://localhost:3000"
-    frontend_origins: list[str] = ["http://localhost:3000"]
+    frontend_origins: str = "http://localhost:3000"
 
     database_url: str = DEFAULT_SQLITE_DATABASE_URL
 
-    @field_validator("frontend_origins", mode="before")
+    @property
+    def cors_origins(self) -> list[str]:
+        return [
+            origin.strip().rstrip("/")
+            for origin in self.frontend_origins.split(",")
+            if origin.strip()
+        ]
+
+    @field_validator("frontend_origins")
     @classmethod
-    def parse_frontend_origins(cls, value: object) -> object:
-        if isinstance(value, str):
-            return [item.strip().rstrip("/") for item in value.split(",") if item.strip()]
-        return value
+    def validate_frontend_origins(cls, value: str) -> str:
+        origins = [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
+        if not origins:
+            raise ValueError("FRONTEND_ORIGINS must contain at least one origin.")
+        return ",".join(origins)
 
     model_config = SettingsConfigDict(
         env_file=".env",
