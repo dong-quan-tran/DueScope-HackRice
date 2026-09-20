@@ -1,4 +1,4 @@
-﻿"""Persistent demo-workspace bootstrap and serialization.
+"""Persistent demo-workspace bootstrap and serialization.
 
 The existing in-memory DEMO_WORKSPACE remains available to legacy routes during
 the migration. This module persists an equivalent academic dashboard dataset
@@ -283,6 +283,8 @@ def seed_demo_workspace(db: Session) -> User:
 
     for item in DEMO_EVENTS:
         due_at = parse_datetime(item["due_at"])
+        has_due_at = due_at is not None
+
         if due_at is None:
             due_at = parse_datetime(item["starts_at"])
 
@@ -303,6 +305,7 @@ def seed_demo_workspace(db: Session) -> User:
             metadata_json={
                 "type": item["type"],
                 "starts_at": item["starts_at"],
+                "has_due_at": has_due_at,
                 "location": item.get("location"),
                 "workload_minutes": item["workload_minutes"],
                 "source_excerpt": item["source_excerpt"],
@@ -351,20 +354,10 @@ def _serialize_event(event: AcademicEvent) -> dict[str, Any]:
             "due_at": isoformat(item.due_at),
             "source_id": source_external_id,
             "reason": item.reason,
-            "is_current": False,
+            "is_current": index == len(event.history) - 1 and event.status == "updated",
         }
-        for item in event.history
+        for index, item in enumerate(event.history)
     ]
-
-    if event.status == "updated":
-        history.append(
-            {
-                "due_at": isoformat(event.due_at),
-                "source_id": source_external_id,
-                "reason": "Current canonical deadline",
-                "is_current": True,
-            }
-        )
 
     return {
         "id": event.external_id or event.id,
@@ -372,7 +365,7 @@ def _serialize_event(event: AcademicEvent) -> dict[str, Any]:
         "type": metadata.get("type", "assignment"),
         "title": event.title,
         "starts_at": metadata.get("starts_at"),
-        "due_at": isoformat(event.due_at) if metadata.get("has_due_at", True) else None,
+        "due_at": isoformat(event.due_at) if metadata.get("has_due_at", event.status != "needs_review") else None,
         "location": metadata.get("location"),
         "status": event.status,
         "approved": event.calendar_approved,
