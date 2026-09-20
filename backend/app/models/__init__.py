@@ -1,4 +1,4 @@
-﻿"""SQLAlchemy models exported for metadata registration."""
+"""SQLAlchemy models exported for metadata registration."""
 
 from app.models.domain import (
     AcademicEvent,
@@ -10,6 +10,7 @@ from app.models.domain import (
     JobCalendarProposal,
     JobHistory,
     OAuthCredential,
+    OAuthState,
     Source,
     User,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "JobCalendarProposal",
     "JobHistory",
     "OAuthCredential",
+    "OAuthState",
     "Source",
     "User",
 ]

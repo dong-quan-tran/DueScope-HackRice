@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -11,17 +11,19 @@ from pydantic import BaseModel, Field
 from app.api.demo import DEMO_WORKSPACE
 from app.schemas.events import AcademicEvent
 from app.services.google_oauth import (
+    consume_oauth_state,
     create_flow,
+    delete_credentials,
     get_credentials,
     save_credentials,
+    save_oauth_state,
 )
 
 
 router = APIRouter(prefix="/google", tags=["google"])
 
-# Local-development storage only. It is cleared when Uvicorn restarts.
-# Production should use a signed session plus durable server-side storage.
-oauth_flows: dict[str, Any] = {}
+# OAuth state is stored server-side in Neon so authorization can survive
+# a Render restart and is not exposed to the browser.
 
 
 class GoogleCalendarSyncRequest(BaseModel):
@@ -320,7 +322,7 @@ def start_google_auth() -> RedirectResponse:
         prompt="consent",
     )
 
-    oauth_flows[state] = flow
+    save_oauth_state(state)
 
     return RedirectResponse(
         url=authorization_url,
@@ -339,9 +341,7 @@ def google_auth_callback(
             detail="Missing OAuth state. Start Google authorization again.",
         )
 
-    flow = oauth_flows.pop(state, None)
-
-    if flow is None:
+    if not consume_oauth_state(state):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -349,6 +349,8 @@ def google_auth_callback(
                 "Start Google authorization again from /api/google/auth/start."
             ),
         )
+
+    flow = create_flow()
 
     try:
         flow.fetch_token(code=code)
@@ -386,6 +388,10 @@ def google_auth_status() -> dict[str, bool]:
     except HTTPException:
         return {"connected": False}
 
+
+@router.post("/auth/disconnect")
+def disconnect_google() -> dict[str, bool]:
+    return {"disconnected": delete_credentials()}
 
 @router.post("/calendar/sync-approved")
 def sync_approved_deadlines(

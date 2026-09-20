@@ -1,4 +1,4 @@
-﻿"""Persistent domain models for DueScope."""
+"""Persistent domain models for DueScope."""
 
 from __future__ import annotations
 
@@ -251,6 +251,18 @@ class CalendarSyncRecord(Base):
         nullable=False,
     )
 
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
 
 class OAuthCredential(TimestampedModel, Base):
     __tablename__ = "oauth_credentials"
