@@ -23,6 +23,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://due-scope-hack-rice.vercel.app",
+        "https://due-scope-hack-rice-git-main-dong-quan-tran.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
