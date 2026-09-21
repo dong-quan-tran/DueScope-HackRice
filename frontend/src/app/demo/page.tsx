@@ -528,6 +528,13 @@ export default function Home() {
   }, []);
 
   async function loadCanvasCourses() {
+    if (IS_PUBLIC_DEMO) {
+      setNotice(
+        "Canvas is connected in the private alpha. This public demo uses safe sample data.",
+      );
+      return;
+    }
+
     setCanvasLoading(true);
     setNotice("");
 
@@ -562,6 +569,13 @@ export default function Home() {
   }
 
   async function importCanvasCourse() {
+    if (IS_PUBLIC_DEMO) {
+      setNotice(
+        "Canvas imports are available in the private alpha. This public demo uses safe sample data.",
+      );
+      return;
+    }
+
     if (!canvasCourseId) {
       setNotice("Load and select a Canvas course first.");
       return;
@@ -777,10 +791,24 @@ export default function Home() {
   }
 
   function connectGoogleCalendar() {
+    if (IS_PUBLIC_DEMO) {
+      setNotice(
+        "Google Calendar is connected in the private alpha. This public demo never requests access to visitor accounts.",
+      );
+      return;
+    }
+
     window.location.assign(`${API_URL}/api/google/auth/start`);
   }
 
   async function syncApprovedToGoogle() {
+    if (IS_PUBLIC_DEMO) {
+      setNotice(
+        "Google Calendar sync is demonstrated in private alpha. DueScope only syncs explicitly approved deadlines.",
+      );
+      return;
+    }
+
     if (!googleConnected) {
       setNotice("Connect Google Calendar before syncing deadlines.");
       return;
@@ -842,6 +870,13 @@ export default function Home() {
   }
 
   async function syncSelectedEventToGoogle(event: AcademicEvent) {
+    if (IS_PUBLIC_DEMO) {
+      setNotice(
+        "Google Calendar sync is demonstrated in private alpha. DueScope only syncs explicitly approved deadlines.",
+      );
+      return;
+    }
+
     if (!googleConnected) {
       setNotice("Connect Google Calendar before syncing deadlines.");
       return;
@@ -1289,7 +1324,15 @@ export default function Home() {
                 </div>
               </div>
 
-              {canvasCourses.length === 0 ? (
+              {IS_PUBLIC_DEMO ? (
+                <div className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm text-cyan-100">
+                  <p className="font-bold">Private-alpha integration</p>
+                  <p className="mt-1 text-cyan-100/80">
+                    DueScope imports official Canvas assignments and preserves their source evidence.
+                    This public demo uses safe sample data and never exposes visitor Canvas accounts.
+                  </p>
+                </div>
+              ) : canvasCourses.length === 0 ? (
                 <button
                   onClick={() => void loadCanvasCourses()}
                   disabled={canvasLoading}
@@ -1595,6 +1638,10 @@ export default function Home() {
                       {syncingGoogle ? <Loader2 size={18} className="animate-spin" /> : <CalendarCheck2 size={18} />}
                       {syncingGoogle ? "Syncing approved deadlines..." : `Sync ${approvedSyncableEvents.length} approved deadline${approvedSyncableEvents.length === 1 ? "" : "s"}`}
                     </button>
+                  ) : IS_PUBLIC_DEMO ? (
+                    <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                      Live Google Calendar sync is available in the private alpha. DueScope only creates or updates events after explicit approval.
+                    </div>
                   ) : (
                     <button
                       onClick={connectGoogleCalendar}
