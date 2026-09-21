@@ -1649,6 +1649,20 @@ export default function Home() {
                     >
                       <CalendarCheck2 size={18} />
                       Connect Google Calendar
+                    </button>                  ) : IS_PUBLIC_DEMO ? (
+                    <div className="mt-3 rounded-lg border border-emerald-400/30 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                      <p className="font-bold">Private-alpha integration</p>
+                      <p className="mt-1 text-emerald-100/80">
+                        Google Calendar sync is available in the private alpha. DueScope only creates or updates events after explicit approval.
+                      </p>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={connectGoogleCalendar}
+                      className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-2.5 font-bold text-slate-950 transition hover:bg-emerald-300"
+                    >
+                      <CalendarCheck2 size={18} />
+                      Connect Google Calendar
                     </button>
                   )}
                   {googleConnected && approvedSyncableEvents.length === 0 && (
