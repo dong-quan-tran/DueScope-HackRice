@@ -1,4 +1,4 @@
-"""Persistent domain models for DueScope."""
+﻿"""Persistent domain models for DueScope."""
 
 from __future__ import annotations
 
@@ -64,7 +64,59 @@ class User(TimestampedModel, Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    app_sessions: Mapped[list[AppSession]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    oauth_transactions: Mapped[list[OAuthTransaction]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
+
+class AppSession(Base):
+    __tablename__ = "app_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    session_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(back_populates="app_sessions")
+
+
+class OAuthTransaction(Base):
+    __tablename__ = "oauth_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(50), nullable=False, default="connect")
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    encrypted_code_verifier: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
+    user: Mapped[User] = relationship(back_populates="oauth_transactions")
 
 class Course(TimestampedModel, Base):
     __tablename__ = "courses"
@@ -279,3 +331,4 @@ class OAuthCredential(TimestampedModel, Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="oauth_credentials")
+
