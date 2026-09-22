@@ -118,6 +118,21 @@ class OAuthTransaction(Base):
 
     user: Mapped[User] = relationship(back_populates="oauth_transactions")
 
+class LoginTransaction(Base):
+    __tablename__ = "login_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    encrypted_nonce: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        nullable=False,
+    )
+
 class Course(TimestampedModel, Base):
     __tablename__ = "courses"
     __table_args__ = (UniqueConstraint("user_id", "external_id", name="uq_courses_user_external_id"),)
@@ -331,4 +346,5 @@ class OAuthCredential(TimestampedModel, Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(back_populates="oauth_credentials")
+
 
