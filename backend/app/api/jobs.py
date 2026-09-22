@@ -22,7 +22,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 DEFAULT_JOB_QUERY = (
-    "newer_than:14d in:inbox "
+    "newer_than:30d in:inbox "
     "-from:linkedin.com "
     "-from:chase.com "
     "-from:americanexpress.com "
@@ -38,7 +38,13 @@ DEFAULT_JOB_QUERY = (
     "from:icims.com OR "
     "from:jobvite.com OR "
     "from:successfactors.com OR "
-    "from:recruiting.com"
+    "from:recruiting.com OR "
+    '"action required" OR '
+    '"online assessment" OR '
+    '"assessment deadline" OR '
+    '"complete your assessment" OR '
+    '"coding assessment" OR '
+    '"interview scheduling"'
     ")"
 )
 
@@ -623,12 +629,12 @@ def proposal_kind_for_message(status: str, text: str) -> str | None:
 
 def proposal_title(kind: str, company: str) -> str:
     if kind == "online_assessment_deadline":
-        return f"Complete assessment â€” {company}"
+        return f"Complete assessment Ã¢â‚¬â€ {company}"
 
     if kind == "interview_scheduling_deadline":
-        return f"Choose interview time â€” {company}"
+        return f"Choose interview time Ã¢â‚¬â€ {company}"
 
-    return f"Interview â€” {company}"
+    return f"Interview Ã¢â‚¬â€ {company}"
 
 
 def create_job_calendar_proposal(
