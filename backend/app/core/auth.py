@@ -8,6 +8,7 @@ from fastapi import Cookie, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.security import new_session_token, session_expires_at, sha256_hex
 from app.db.session import get_db
 from app.models.domain import AppSession, User
@@ -21,7 +22,6 @@ def utc_now() -> datetime:
 
 
 def create_session(db: Session, user: User) -> tuple[str, AppSession]:
-    """Create and persist an opaque server-side session for a user."""
     raw_token = new_session_token()
     session = AppSession(
         user_id=user.id,
@@ -34,27 +34,32 @@ def create_session(db: Session, user: User) -> tuple[str, AppSession]:
     return raw_token, session
 
 
+def session_cookie_settings() -> dict[str, object]:
+    settings = get_settings()
+    is_production = settings.app_env == "production"
+
+    return {
+        "httponly": True,
+        "secure": is_production,
+        "samesite": "none" if is_production else "lax",
+        "path": "/",
+    }
+
+
 def set_session_cookie(response: Response, raw_token: str, expires_at: datetime) -> None:
-    """Set the secure HttpOnly application-session cookie."""
     max_age = max(0, int((expires_at - utc_now()).total_seconds()))
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=raw_token,
         max_age=max_age,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
+        **session_cookie_settings(),
     )
 
 
 def clear_session_cookie(response: Response) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
-        path="/",
-        httponly=True,
-        secure=True,
-        samesite="lax",
+        **session_cookie_settings(),
     )
 
 
@@ -62,14 +67,13 @@ def get_current_user(
     session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     db: Session = Depends(get_db),
 ) -> User:
-    """Resolve the authenticated user from the opaque session cookie."""
     if not session_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sign in is required.",
         )
 
-    session = db.scalar(
+    app_session = db.scalar(
         select(AppSession).where(
             AppSession.session_hash == sha256_hex(session_token),
             AppSession.revoked_at.is_(None),
@@ -77,13 +81,13 @@ def get_current_user(
         )
     )
 
-    if not session:
+    if not app_session:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Your session is invalid or expired. Sign in again.",
         )
 
-    user = db.get(User, session.user_id)
+    user = db.get(User, app_session.user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
