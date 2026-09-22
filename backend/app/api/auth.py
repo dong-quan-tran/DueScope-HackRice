@@ -169,9 +169,20 @@ def login_callback(
             client_id,
         )
     except Exception as exc:
+        import logging
+        import secrets
+
+        request_id = secrets.token_hex(8)
+        logging.getLogger(__name__).exception(
+            "Google sign-in failed; request_id=%s",
+            request_id,
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"Google sign-in failed: {type(exc).__name__}: {str(exc)}",
+            detail=(
+                "Google sign-in failed. Please try again. "
+                f"Reference: {request_id}"
+            ),
         ) from exc
 
     if verified.get("nonce") != nonce:
@@ -237,5 +248,6 @@ def logout(
 
     clear_session_cookie(response)
     return response
+
 
 
