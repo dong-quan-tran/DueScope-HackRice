@@ -1536,8 +1536,10 @@ setGoogleStatusLoading(true);
                       Latest scan: {jobScanResult.matched_count} matching email{jobScanResult.matched_count === 1 ? "" : "s"}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {jobScanResult.created.length} created ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {jobScanResult.updated.length} updated ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {jobScanResult.calendar_proposals?.length ?? 0} reminders ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {jobScanResult.skipped.length} skipped ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {jobScanResult.errors.length} errors
-                    </p>
+  {jobScanResult.created.length} created | {jobScanResult.updated.length} updated |{" "}
+  {jobScanResult.calendar_proposals?.length ?? 0} reminders | {jobScanResult.skipped.length} skipped |{" "}
+  {jobScanResult.errors.length} errors
+</p>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-400">{jobScanResult.safety_note}</p>
                 </div>
@@ -1648,7 +1650,9 @@ setGoogleStatusLoading(true);
                               <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Next action</p>
                               <p className="mt-1 text-sm text-slate-300">{job.next_action}</p>
                             </div>
-                            <p className="mt-3 text-xs text-slate-500">Latest source: {formatDate(job.received_at)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {job.source_sender}</p>
+                            <p className="mt-3 text-xs text-slate-500">
+  Latest source: {formatDate(job.received_at)} | {job.source_sender}
+</p>
                             <p className="mt-1 text-sm text-slate-400">{job.source_subject}</p>
                             <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-500">{job.source_excerpt}</p>
                             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1807,7 +1811,7 @@ setGoogleStatusLoading(true);
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="font-semibold text-violet-100">{proposal.title}</p>
-                            <p className="mt-1 text-sm text-violet-200">{proposal.company} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {proposal.role}</p>
+                            <p className="mt-1 text-sm text-violet-200">{proposal.company} | {proposal.role}</p>
                           </div>
                           <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(proposal.kind)}`}>
                             {actionLabel(proposal.kind)}
