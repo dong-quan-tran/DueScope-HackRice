@@ -64,7 +64,7 @@ def create_flow() -> Flow:
         redirect_uri=required_env("GOOGLE_OAUTH_REDIRECT_URI"),
         autogenerate_code_verifier=True,
     )
-    flow.oauth2session.scope = None
+
     return flow
 
 
@@ -201,5 +201,6 @@ def delete_credentials(user_id: str) -> bool:
         db.commit()
 
     return True
+
 
 
