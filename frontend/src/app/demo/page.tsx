@@ -1810,7 +1810,7 @@ setGoogleStatusLoading(true);
                       <article key={proposal.id} className="rounded-xl border border-violet-400/30 bg-slate-950/70 p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
-                            <p className="font-semibold text-violet-100">{proposal.title}</p>
+                            <p className="font-semibold text-violet-100">{proposal.title.replace(/[^\x00-\x7F]/g, " - ")}</p>
                             <p className="mt-1 text-sm text-violet-200">{proposal.company} | {proposal.role}</p>
                           </div>
                           <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(proposal.kind)}`}>
