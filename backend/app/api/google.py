@@ -293,7 +293,10 @@ def google_auth_callback(
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail="Google token exchange failed. Start authorization again.",
+            detail=(
+                "Google token exchange failed: "
+                f"{type(exc).__name__}: {str(exc)}"
+            ),
         ) from exc
 
     return RedirectResponse(
@@ -400,3 +403,4 @@ def sync_approved_deadlines(
         "skipped": skipped,
         "failed": failed,
     }
+
