@@ -1,22 +1,20 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from sqlalchemy import select
 
+from app.core.security import decrypt_secret, encrypt_secret
 from app.db.session import SessionLocal
-from app.models.domain import OAuthCredential, OAuthState
-from app.repositories.academic import get_or_create_demo_user
+from app.models.domain import OAuthCredential, OAuthTransaction
 
 
 SCOPES = [
@@ -25,48 +23,17 @@ SCOPES = [
 ]
 
 PROVIDER = "google"
-OAUTH_STATE_TTL = timedelta(minutes=15)
+OAUTH_TRANSACTION_TTL = timedelta(minutes=15)
 
 
 def required_env(name: str) -> str:
     value = os.getenv(name, "").strip()
-
     if not value:
         raise HTTPException(
             status_code=503,
             detail=f"{name} is not configured on the server.",
         )
-
     return value
-
-
-def fernet() -> Fernet:
-    raw_key = required_env("GOOGLE_TOKEN_ENCRYPTION_KEY")
-
-    try:
-        return Fernet(raw_key.encode("utf-8"))
-    except (ValueError, TypeError):
-        derived_key = base64.urlsafe_b64encode(
-            hashlib.sha256(raw_key.encode("utf-8")).digest()
-        )
-        return Fernet(derived_key)
-
-
-def encrypt(value: str) -> str:
-    return fernet().encrypt(value.encode("utf-8")).decode("utf-8")
-
-
-def decrypt(value: str) -> str:
-    try:
-        return fernet().decrypt(value.encode("utf-8")).decode("utf-8")
-    except InvalidToken as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Google credentials cannot be decrypted. "
-                "Check GOOGLE_TOKEN_ENCRYPTION_KEY or reconnect Google."
-            ),
-        ) from exc
 
 
 def state_hash(state: str) -> str:
@@ -98,88 +65,86 @@ def create_flow() -> Flow:
     )
 
 
-def save_oauth_state(state: str, code_verifier: str) -> None:
+def save_oauth_transaction(user_id: str, state: str, code_verifier: str) -> None:
     now = datetime.now(timezone.utc)
 
     with SessionLocal() as db:
         db.execute(
-            OAuthState.__table__.delete().where(
-                OAuthState.created_at < now - OAUTH_STATE_TTL
+            OAuthTransaction.__table__.delete().where(
+                OAuthTransaction.expires_at < now
             )
         )
         db.add(
-            OAuthState(
+            OAuthTransaction(
+                user_id=user_id,
                 provider=PROVIDER,
+                purpose="connect",
                 state_hash=state_hash(state),
-                encrypted_code_verifier=encrypt(code_verifier),
+                encrypted_code_verifier=encrypt_secret(code_verifier),
+                expires_at=now + OAUTH_TRANSACTION_TTL,
             )
         )
         db.commit()
 
 
-def consume_oauth_state(state: str) -> str | None:
+def consume_oauth_transaction(state: str) -> tuple[str, str] | None:
     now = datetime.now(timezone.utc)
 
     with SessionLocal() as db:
         record = db.scalar(
-            select(OAuthState).where(
-                OAuthState.provider == PROVIDER,
-                OAuthState.state_hash == state_hash(state),
+            select(OAuthTransaction).where(
+                OAuthTransaction.provider == PROVIDER,
+                OAuthTransaction.purpose == "connect",
+                OAuthTransaction.state_hash == state_hash(state),
+                OAuthTransaction.used_at.is_(None),
+                OAuthTransaction.expires_at > now,
             )
         )
 
         if record is None:
             return None
 
-        created_at = record.created_at
-        code_verifier = decrypt(record.encrypted_code_verifier)
-        db.delete(record)
+        record.used_at = now
+        user_id = record.user_id
+        code_verifier = decrypt_secret(record.encrypted_code_verifier)
         db.commit()
 
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
-
-    if now - created_at > OAUTH_STATE_TTL:
-        return None
-
-    return code_verifier
+    return user_id, code_verifier
 
 
-def save_credentials(credentials: Credentials) -> None:
+def save_credentials(user_id: str, credentials: Credentials) -> None:
     raw_json = credentials.to_json()
 
     with SessionLocal() as db:
-        user = get_or_create_demo_user(db)
         record = db.scalar(
             select(OAuthCredential).where(
-                OAuthCredential.user_id == user.id,
+                OAuthCredential.user_id == user_id,
                 OAuthCredential.provider == PROVIDER,
             )
         )
 
         if record is None:
             record = OAuthCredential(
-                user_id=user.id,
+                user_id=user_id,
                 provider=PROVIDER,
-                encrypted_token=encrypt(raw_json),
+                encrypted_token=encrypt_secret(raw_json),
                 scopes=list(credentials.scopes or SCOPES),
                 expires_at=credentials.expiry,
             )
             db.add(record)
         else:
-            record.encrypted_token = encrypt(raw_json)
+            record.encrypted_token = encrypt_secret(raw_json)
             record.scopes = list(credentials.scopes or SCOPES)
             record.expires_at = credentials.expiry
 
         db.commit()
 
 
-def get_credentials() -> Credentials:
+def get_credentials(user_id: str) -> Credentials:
     with SessionLocal() as db:
-        user = get_or_create_demo_user(db)
         record = db.scalar(
             select(OAuthCredential).where(
-                OAuthCredential.user_id == user.id,
+                OAuthCredential.user_id == user_id,
                 OAuthCredential.provider == PROVIDER,
             )
         )
@@ -187,13 +152,10 @@ def get_credentials() -> Credentials:
         if record is None:
             raise HTTPException(
                 status_code=401,
-                detail=(
-                    "Google account is not connected. "
-                    "Open /api/google/auth/start first."
-                ),
+                detail="Google account is not connected. Connect Google first.",
             )
 
-        raw_json = decrypt(record.encrypted_token)
+        raw_json = decrypt_secret(record.encrypted_token)
 
     credentials = Credentials.from_authorized_user_info(
         json.loads(raw_json),
@@ -209,7 +171,7 @@ def get_credentials() -> Credentials:
                 detail=f"Google authorization refresh failed: {exc}",
             ) from exc
 
-        save_credentials(credentials)
+        save_credentials(user_id, credentials)
 
     if not credentials.valid:
         raise HTTPException(
@@ -220,12 +182,11 @@ def get_credentials() -> Credentials:
     return credentials
 
 
-def delete_credentials() -> bool:
+def delete_credentials(user_id: str) -> bool:
     with SessionLocal() as db:
-        user = get_or_create_demo_user(db)
         record = db.scalar(
             select(OAuthCredential).where(
-                OAuthCredential.user_id == user.id,
+                OAuthCredential.user_id == user_id,
                 OAuthCredential.provider == PROVIDER,
             )
         )

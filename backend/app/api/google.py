@@ -1,37 +1,32 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
 from app.api.demo import DEMO_WORKSPACE
+from app.core.auth import get_current_user
+from app.core.config import get_settings
+from app.models.domain import User
 from app.schemas.events import AcademicEvent
 from app.services.google_oauth import (
-    consume_oauth_state,
+    consume_oauth_transaction,
     create_flow,
     delete_credentials,
     get_credentials,
     save_credentials,
-    save_oauth_state,
+    save_oauth_transaction,
 )
 
 
 router = APIRouter(prefix="/google", tags=["google"])
 
-# OAuth state is stored server-side in Neon so authorization can survive
-# a Render restart and is not exposed to the browser.
-
 
 class GoogleCalendarSyncRequest(BaseModel):
-    """
-    If event_ids is omitted or empty, sync every currently eligible event.
-    Eligible events must be approved and have verified/updated status.
-    """
-
     event_ids: list[str] | None = Field(
         default=None,
         description=(
@@ -45,25 +40,15 @@ def get_workspace_event(event_id: str) -> AcademicEvent | None:
     for stored_event in DEMO_WORKSPACE["events"]:
         if stored_event["id"] == event_id:
             return AcademicEvent.model_validate(stored_event)
-
     return None
 
 
 def selected_workspace_events(
     event_ids: list[str] | None,
 ) -> tuple[list[AcademicEvent], list[dict[str, str]]]:
-    """
-    Return selected events and explicit not-found failures.
-
-    If no IDs are supplied, return all workspace events and let eligibility
-    checks decide which records are skipped.
-    """
     if not event_ids:
         return (
-            [
-                AcademicEvent.model_validate(event)
-                for event in DEMO_WORKSPACE["events"]
-            ],
+            [AcademicEvent.model_validate(event) for event in DEMO_WORKSPACE["events"]],
             [],
         )
 
@@ -72,7 +57,6 @@ def selected_workspace_events(
 
     for event_id in event_ids:
         event = get_workspace_event(event_id)
-
         if event is None:
             failures.append(
                 {
@@ -81,7 +65,6 @@ def selected_workspace_events(
                 }
             )
             continue
-
         events.append(event)
 
     return events, failures
@@ -91,7 +74,6 @@ def course_name_for_event(event: AcademicEvent) -> str:
     for course in DEMO_WORKSPACE["courses"]:
         if course["id"] == event.course_id:
             return str(course["name"])
-
     return event.course_id
 
 
@@ -99,15 +81,10 @@ def source_for_event(event: AcademicEvent) -> dict[str, Any] | None:
     for source in DEMO_WORKSPACE["sources"]:
         if source["id"] == event.source_id:
             return source
-
     return None
 
 
 def event_description(event: AcademicEvent) -> str:
-    """
-    Build a human-readable Calendar description that preserves DueScope
-    provenance without exposing OAuth secrets.
-    """
     course_name = course_name_for_event(event)
     source = source_for_event(event)
 
@@ -136,44 +113,24 @@ def event_description(event: AcademicEvent) -> str:
 
         excerpt = source.get("excerpt") or source.get("content")
         if excerpt:
-            lines.extend(
-                [
-                    "",
-                    "Source excerpt:",
-                    str(excerpt).strip(),
-                ]
-            )
+            lines.extend(["", "Source excerpt:", str(excerpt).strip()])
 
     return "\n".join(lines)
 
 
 def calendar_event_body(event: AcademicEvent) -> dict[str, Any]:
-    """
-    Calendar deadlines use a 30-minute block ending at due_at.
-    """
     if event.due_at is None:
         raise ValueError("DueScope event has no due date.")
 
     due_at = event.due_at
     start_at = due_at - timedelta(minutes=30)
-
-    time_zone = (
-        getattr(due_at.tzinfo, "key", None)
-        or str(due_at.tzinfo)
-        or "America/Chicago"
-    )
+    time_zone = getattr(due_at.tzinfo, "key", None) or str(due_at.tzinfo) or "America/Chicago"
 
     return {
         "summary": event.title,
         "description": event_description(event),
-        "start": {
-            "dateTime": start_at.isoformat(),
-            "timeZone": time_zone,
-        },
-        "end": {
-            "dateTime": due_at.isoformat(),
-            "timeZone": time_zone,
-        },
+        "start": {"dateTime": start_at.isoformat(), "timeZone": time_zone},
+        "end": {"dateTime": due_at.isoformat(), "timeZone": time_zone},
         "extendedProperties": {
             "private": {
                 "duescope_event_id": event.id,
@@ -194,7 +151,6 @@ def find_google_event_for_duescope_event(
         singleEvents=True,
         maxResults=10,
     ).execute()
-
     items = response.get("items", [])
     return items[0] if items else None
 
@@ -212,41 +168,22 @@ def job_calendar_description(proposal: dict[str, Any]) -> str:
         "Source evidence:",
         proposal["source_excerpt"],
     ]
-
     source_url = proposal.get("gmail_url")
     if source_url:
         lines.extend(["", f"Open source email: {source_url}"])
-
     return "\n".join(lines)
 
 
 def job_calendar_event_body(proposal: dict[str, Any]) -> dict[str, Any]:
-    """
-    Convert an approved job-calendar proposal to a Google Calendar event.
-
-    Assessments and scheduling deadlines are displayed as a 30-minute reminder
-    ending at due_at. Confirmed interviews use their explicit start/end times.
-    """
     start_at = datetime.fromisoformat(proposal["starts_at"])
     end_at = datetime.fromisoformat(proposal["ends_at"])
-
-    time_zone = (
-        getattr(start_at.tzinfo, "key", None)
-        or str(start_at.tzinfo)
-        or "America/Chicago"
-    )
+    time_zone = getattr(start_at.tzinfo, "key", None) or str(start_at.tzinfo) or "America/Chicago"
 
     return {
         "summary": proposal["title"],
         "description": job_calendar_description(proposal),
-        "start": {
-            "dateTime": start_at.isoformat(),
-            "timeZone": time_zone,
-        },
-        "end": {
-            "dateTime": end_at.isoformat(),
-            "timeZone": time_zone,
-        },
+        "start": {"dateTime": start_at.isoformat(), "timeZone": time_zone},
+        "end": {"dateTime": end_at.isoformat(), "timeZone": time_zone},
         "extendedProperties": {
             "private": {
                 "duescope_job_id": proposal["job_id"],
@@ -267,31 +204,24 @@ def find_google_event_for_job_proposal(
         singleEvents=True,
         maxResults=10,
     ).execute()
-
     items = response.get("items", [])
     return items[0] if items else None
 
 
-def upsert_job_calendar_event(proposal: dict[str, Any]) -> dict[str, str]:
-    """
-    Create or update the Calendar event for an already approved job proposal.
-
-    This is intentionally called only from the explicit approve endpoint in
-    jobs.py. It never runs just because Gmail finds an email.
-    """
+def upsert_job_calendar_event(
+    proposal: dict[str, Any],
+    user_id: str,
+) -> dict[str, str]:
     if proposal.get("status") != "approved":
         raise ValueError("Only approved job proposals can sync to Google Calendar.")
 
-    credentials = get_credentials()
+    credentials = get_credentials(user_id)
     service = build("calendar", "v3", credentials=credentials)
     body = job_calendar_event_body(proposal)
     existing_event = find_google_event_for_job_proposal(service, proposal["id"])
 
     if existing_event is None:
-        saved_event = service.events().insert(
-            calendarId="primary",
-            body=body,
-        ).execute()
+        saved_event = service.events().insert(calendarId="primary", body=body).execute()
         action = "created"
     else:
         saved_event = service.events().update(
@@ -313,7 +243,9 @@ def upsert_job_calendar_event(proposal: dict[str, Any]) -> dict[str, str]:
 
 
 @router.get("/auth/start")
-def start_google_auth() -> RedirectResponse:
+def start_google_auth(
+    current_user: User = Depends(get_current_user),
+) -> RedirectResponse:
     flow = create_flow()
 
     authorization_url, state = flow.authorization_url(
@@ -328,96 +260,75 @@ def start_google_auth() -> RedirectResponse:
             detail="Google OAuth PKCE verifier was not generated.",
         )
 
-    save_oauth_state(state, flow.code_verifier)
+    save_oauth_transaction(current_user.id, state, flow.code_verifier)
 
-    return RedirectResponse(
-        url=authorization_url,
-        status_code=307,
-    )
+    return RedirectResponse(url=authorization_url, status_code=307)
 
 
 @router.get("/auth/callback")
 def google_auth_callback(
     code: str = Query(...),
     state: str | None = Query(default=None),
-) -> HTMLResponse:
+) -> RedirectResponse:
     if not state:
         raise HTTPException(
             status_code=400,
             detail="Missing OAuth state. Start Google authorization again.",
         )
 
-    code_verifier = consume_oauth_state(state)
-
-    if not code_verifier:
+    transaction = consume_oauth_transaction(state)
+    if transaction is None:
         raise HTTPException(
             status_code=400,
-            detail=(
-                "OAuth session was not found or expired. "
-                "Start Google authorization again from /api/google/auth/start."
-            ),
+            detail="OAuth session was not found, expired, or already used. Start again.",
         )
 
+    user_id, code_verifier = transaction
     flow = create_flow()
     flow.code_verifier = code_verifier
 
     try:
         flow.fetch_token(code=code)
-        save_credentials(flow.credentials)
+        save_credentials(user_id, flow.credentials)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Google token exchange failed: {exc}",
+            detail="Google token exchange failed. Start authorization again.",
         ) from exc
 
-    return HTMLResponse(
-        content="""
-        <!doctype html>
-        <html>
-          <head>
-            <meta charset="utf-8">
-            <title>DueScope Connected</title>
-          </head>
-          <body style="font-family: system-ui, sans-serif; max-width: 42rem; margin: 4rem auto; line-height: 1.5;">
-            <h1>Google connected successfully</h1>
-            <p>Your Google Calendar and Gmail permissions were saved for DueScope.</p>
-            <p>You may close this tab and return to the application.</p>
-          </body>
-        </html>
-        """,
-        status_code=200,
+    return RedirectResponse(
+        url=f"{get_settings().public_app_url.rstrip('/')}/demo?google=connected",
+        status_code=303,
     )
 
 
 @router.get("/auth/status")
-def google_auth_status() -> dict[str, bool]:
+def google_auth_status(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, bool]:
     try:
-        get_credentials()
+        get_credentials(current_user.id)
         return {"connected": True}
     except HTTPException:
         return {"connected": False}
 
 
 @router.post("/auth/disconnect")
-def disconnect_google() -> dict[str, bool]:
-    return {"disconnected": delete_credentials()}
+def disconnect_google(
+    current_user: User = Depends(get_current_user),
+) -> dict[str, bool]:
+    return {"disconnected": delete_credentials(current_user.id)}
+
 
 @router.post("/calendar/sync-approved")
 def sync_approved_deadlines(
     request: GoogleCalendarSyncRequest,
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, list[dict[str, str]]]:
-    """
-    Create or update Google Calendar events for approved trusted DueScope
-    deadlines.
-
-    This endpoint does not sync candidates, unresolved proposals, unapproved
-    events, needs_review events, or canceled events.
-    """
-    credentials = get_credentials()
+    credentials = get_credentials(current_user.id)
     service = build("calendar", "v3", credentials=credentials)
 
     events, failed = selected_workspace_events(request.event_ids)
-
     created: list[dict[str, str]] = []
     updated: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -438,27 +349,20 @@ def sync_approved_deadlines(
                 {
                     "event_id": event.id,
                     "title": event.title,
-                    "reason": (
-                        "Only verified or updated events can sync to "
-                        "Google Calendar."
-                    ),
+                    "reason": "Only verified or updated events can sync to Google Calendar.",
                 }
             )
             continue
 
         try:
             body = calendar_event_body(event)
-            existing_google_event = find_google_event_for_duescope_event(
-                service,
-                event.id,
-            )
+            existing_google_event = find_google_event_for_duescope_event(service, event.id)
 
             if existing_google_event is None:
                 saved_event = service.events().insert(
                     calendarId="primary",
                     body=body,
                 ).execute()
-
                 created.append(
                     {
                         "event_id": event.id,
@@ -473,7 +377,6 @@ def sync_approved_deadlines(
                     eventId=existing_google_event["id"],
                     body=body,
                 ).execute()
-
                 updated.append(
                     {
                         "event_id": event.id,
