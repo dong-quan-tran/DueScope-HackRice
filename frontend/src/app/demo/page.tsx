@@ -1,7 +1,7 @@
-"use client";
+﻿"use client";
 
 
-import { API_BASE_URL, IS_PUBLIC_DEMO } from "@/lib/api";
+import { API_BASE_URL, apiFetch, IS_PUBLIC_DEMO } from "@/lib/api";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -427,16 +427,10 @@ export default function Home() {
   }
 
   async function loadGoogleStatus(showError = false) {
-    if (IS_PUBLIC_DEMO) {
-      setGoogleConnected(false);
-      setGoogleStatusLoading(false);
-      return;
-    }
-
-    setGoogleStatusLoading(true);
+setGoogleStatusLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/google/auth/status`, {
+      const response = await apiFetch("/api/google/auth/status", {
         cache: "no-store",
       });
 
@@ -791,13 +785,6 @@ export default function Home() {
   }
 
   function connectGoogleCalendar() {
-    if (IS_PUBLIC_DEMO) {
-      setNotice(
-        "Google Calendar is connected in the private alpha. This public demo never requests access to visitor accounts.",
-      );
-      return;
-    }
-
     window.location.assign(`${API_URL}/api/google/auth/start`);
   }
 
@@ -1466,7 +1453,7 @@ export default function Home() {
                       Latest scan: {jobScanResult.matched_count} matching email{jobScanResult.matched_count === 1 ? "" : "s"}
                     </p>
                     <p className="text-xs text-slate-500">
-                      {jobScanResult.created.length} created Ã‚Â· {jobScanResult.updated.length} updated Ã‚Â· {jobScanResult.calendar_proposals?.length ?? 0} reminders Ã‚Â· {jobScanResult.skipped.length} skipped Ã‚Â· {jobScanResult.errors.length} errors
+                      {jobScanResult.created.length} created Ãƒâ€šÃ‚Â· {jobScanResult.updated.length} updated Ãƒâ€šÃ‚Â· {jobScanResult.calendar_proposals?.length ?? 0} reminders Ãƒâ€šÃ‚Â· {jobScanResult.skipped.length} skipped Ãƒâ€šÃ‚Â· {jobScanResult.errors.length} errors
                     </p>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-400">{jobScanResult.safety_note}</p>
@@ -1578,7 +1565,7 @@ export default function Home() {
                               <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Next action</p>
                               <p className="mt-1 text-sm text-slate-300">{job.next_action}</p>
                             </div>
-                            <p className="mt-3 text-xs text-slate-500">Latest source: {formatDate(job.received_at)} Ã‚Â· {job.source_sender}</p>
+                            <p className="mt-3 text-xs text-slate-500">Latest source: {formatDate(job.received_at)} Ãƒâ€šÃ‚Â· {job.source_sender}</p>
                             <p className="mt-1 text-sm text-slate-400">{job.source_subject}</p>
                             <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-500">{job.source_excerpt}</p>
                             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -1737,7 +1724,7 @@ export default function Home() {
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div>
                             <p className="font-semibold text-violet-100">{proposal.title}</p>
-                            <p className="mt-1 text-sm text-violet-200">{proposal.company} Ã‚Â· {proposal.role}</p>
+                            <p className="mt-1 text-sm text-violet-200">{proposal.company} Ãƒâ€šÃ‚Â· {proposal.role}</p>
                           </div>
                           <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${jobProposalStyle(proposal.kind)}`}>
                             {actionLabel(proposal.kind)}
@@ -1953,3 +1940,5 @@ export default function Home() {
     </main>
   );
 }
+
+
