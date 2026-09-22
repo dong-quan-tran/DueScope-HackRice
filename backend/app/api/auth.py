@@ -169,7 +169,7 @@ def login_callback(
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail="Google sign-in failed. Please try again.",
+            detail=f"Google sign-in failed: {type(exc).__name__}: {str(exc)}",
         ) from exc
 
     if verified.get("nonce") != nonce:
@@ -235,3 +235,4 @@ def logout(
 
     clear_session_cookie(response)
     return response
+
