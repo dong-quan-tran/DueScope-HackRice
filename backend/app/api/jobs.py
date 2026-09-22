@@ -9,15 +9,15 @@ from typing import Any
 from urllib.parse import quote_plus
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from googleapiclient.discovery import build
 from pydantic import BaseModel, Field
 
 from app.api.demo import DEMO_WORKSPACE
+from app.core.auth import get_current_user
 from app.api.google import upsert_job_calendar_event
+from app.models.domain import User
 from app.services.google_oauth import get_credentials
-
-
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
@@ -623,12 +623,12 @@ def proposal_kind_for_message(status: str, text: str) -> str | None:
 
 def proposal_title(kind: str, company: str) -> str:
     if kind == "online_assessment_deadline":
-        return f"Complete assessment — {company}"
+        return f"Complete assessment â€” {company}"
 
     if kind == "interview_scheduling_deadline":
-        return f"Choose interview time — {company}"
+        return f"Choose interview time â€” {company}"
 
-    return f"Interview — {company}"
+    return f"Interview â€” {company}"
 
 
 def create_job_calendar_proposal(
@@ -725,14 +725,17 @@ def list_job_calendar_proposals() -> list[dict[str, Any]]:
 
 
 @router.post("/scan")
-def scan_job_application_email(request: JobScanRequest) -> dict[str, Any]:
+def scan_job_application_email(
+    request: JobScanRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     """
     Scan Gmail read-only for recruiting/application messages.
 
     Job reminders are created as pending proposals only when an email contains
     explicit date-and-time wording. Gmail scanning never writes to Calendar.
     """
-    credentials = get_credentials()
+    credentials = get_credentials(current_user.id)
     service = build("gmail", "v1", credentials=credentials)
 
     try:
