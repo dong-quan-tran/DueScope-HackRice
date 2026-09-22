@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 
 import { API_BASE_URL, apiFetch, IS_PUBLIC_DEMO } from "@/lib/api";
@@ -19,6 +19,8 @@ import {
   ShieldCheck,
   Sparkles,
   Unplug,
+
+  UserRound,
   X,
 } from "lucide-react";
 
@@ -119,6 +121,17 @@ type CanvasCourse = {
 
 type GoogleAuthStatus = {
   connected: boolean;
+};
+
+type SessionUser = {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+};
+
+type SessionStatus = {
+  authenticated: boolean;
+  user: SessionUser;
 };
 
 type GoogleSyncItem = {
@@ -356,6 +369,8 @@ export default function Home() {
   const [resolvingProposalId, setResolvingProposalId] = useState("");
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleStatusLoading, setGoogleStatusLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [syncingGoogle, setSyncingGoogle] = useState(false);
   const [syncResult, setSyncResult] = useState<GoogleSyncResult | null>(null);
   const [jobs, setJobs] = useState<JobApplication[]>([]);
@@ -426,6 +441,29 @@ export default function Home() {
     }
   }
 
+  async function loadCurrentUser(showError = false) {
+    setAuthLoading(true);
+
+    try {
+      const response = await apiFetch("/api/auth/me", {
+        cache: "no-store",
+      });
+      const data = (await response.json()) as SessionStatus;
+      setCurrentUser(data.user);
+    } catch (error) {
+      setCurrentUser(null);
+
+      if (
+        showError &&
+        error instanceof Error &&
+        !error.message.toLowerCase().includes("sign in")
+      ) {
+        setNotice(error.message);
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  }
   async function loadGoogleStatus(showError = false) {
 setGoogleStatusLoading(true);
 
@@ -516,9 +554,25 @@ setGoogleStatusLoading(true);
 
   useEffect(() => {
     void loadWorkspace();
+    void loadCurrentUser();
     void loadGoogleStatus();
     void loadJobs();
     void loadJobCalendarProposals();
+
+    const params = new URLSearchParams(window.location.search);
+    const loginSucceeded = params.get("login") === "success";
+    const googleConnectedNow = params.get("google") === "connected";
+
+    if (loginSucceeded || googleConnectedNow) {
+      setNotice(
+        googleConnectedNow
+          ? "Google connected. Gmail remains read-only; Calendar changes still require explicit approval."
+          : "Signed in. Your DueScope workspace is now private to your account.",
+      );
+      window.history.replaceState({}, "", "/demo");
+      void loadCurrentUser();
+      void loadGoogleStatus(true);
+    }
   }, []);
 
   async function loadCanvasCourses() {
@@ -1140,7 +1194,18 @@ setGoogleStatusLoading(true);
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="inline-flex items-center gap-2 self-start rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm lg:self-end">
+            <UserRound size={16} className="text-cyan-300" />
+            {authLoading ? (
+              <span className="text-slate-400">Checking account...</span>
+            ) : currentUser ? (
+              <span className="max-w-52 truncate text-slate-200">
+                {currentUser.display_name || currentUser.email || "Signed in"}
+              </span>
+            ) : (
+              <span className="text-amber-200">Not signed in</span>
+            )}
+          </div>          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <button
               onClick={() => void syncApprovedToGoogle()}
               disabled={syncingGoogle || googleStatusLoading || !googleConnected}
@@ -1933,4 +1998,3 @@ setGoogleStatusLoading(true);
     </main>
   );
 }
-
