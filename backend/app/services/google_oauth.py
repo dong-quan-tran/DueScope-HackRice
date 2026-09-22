@@ -18,6 +18,9 @@ from app.models.domain import OAuthCredential, OAuthTransaction
 
 
 SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
     "https://www.googleapis.com/auth/calendar.events",
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
@@ -201,6 +204,7 @@ def delete_credentials(user_id: str) -> bool:
         db.commit()
 
     return True
+
 
 
 

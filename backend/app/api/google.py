@@ -291,11 +291,19 @@ def google_auth_callback(
         flow.fetch_token(code=code)
         save_credentials(user_id, flow.credentials)
     except Exception as exc:
+        import logging
+        import secrets
+
+        request_id = secrets.token_hex(8)
+        logging.getLogger(__name__).exception(
+            "Google token exchange failed; request_id=%s",
+            request_id,
+        )
         raise HTTPException(
             status_code=400,
             detail=(
-                "Google token exchange failed: "
-                f"{type(exc).__name__}: {str(exc)}"
+                "Google token exchange failed. Start authorization again. "
+                f"Reference: {request_id}"
             ),
         ) from exc
 
@@ -403,4 +411,5 @@ def sync_approved_deadlines(
         "skipped": skipped,
         "failed": failed,
     }
+
 
