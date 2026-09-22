@@ -23,10 +23,13 @@ class Settings(BaseSettings):
 
     database_url: str = DEFAULT_SQLITE_DATABASE_URL
 
-    # Required for production session signing and provider-token encryption.
-    # Development/test may omit them while the authentication layer is not enabled.
     app_session_secret: str | None = None
     token_encryption_key: str | None = None
+
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_oauth_redirect_uri: str | None = None
+    google_login_redirect_uri: str | None = None
 
     @property
     def cors_origins(self) -> list[str]:
@@ -54,6 +57,18 @@ class Settings(BaseSettings):
             if not self.token_encryption_key:
                 raise ValueError(
                     "TOKEN_ENCRYPTION_KEY must be set in production."
+                )
+            if not self.google_client_id or not self.google_client_secret:
+                raise ValueError(
+                    "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in production."
+                )
+            if not self.google_oauth_redirect_uri:
+                raise ValueError(
+                    "GOOGLE_OAUTH_REDIRECT_URI must be set in production."
+                )
+            if not self.google_login_redirect_uri:
+                raise ValueError(
+                    "GOOGLE_LOGIN_REDIRECT_URI must be set in production."
                 )
         return self
 
