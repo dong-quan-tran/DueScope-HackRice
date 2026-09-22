@@ -157,7 +157,9 @@ def login_callback(
         },
         scopes=GOOGLE_SCOPES.split(),
         redirect_uri=redirect_uri,
+        autogenerate_code_verifier=False,
     )
+    flow.oauth2session.scope = None
 
     try:
         flow.fetch_token(code=code)
@@ -235,4 +237,5 @@ def logout(
 
     clear_session_cookie(response)
     return response
+
 
