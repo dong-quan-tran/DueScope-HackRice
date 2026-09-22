@@ -16,6 +16,37 @@ export function apiUrl(path: string): string {
   return `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+export async function apiFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      ...init.headers,
+    },
+  });
+
+  if (!response.ok) {
+    let detail = `Request failed with status ${response.status}.`;
+
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === "string") {
+        detail = body.detail;
+      }
+    } catch {
+      // Keep the safe fallback when the server returns no JSON body.
+    }
+
+    throw new Error(detail);
+  }
+
+  return response;
+}
+
 // Retained only for an explicit local/mock walkthrough mode.
 // Do not use this flag as a security boundary.
 export const IS_PUBLIC_DEMO =
