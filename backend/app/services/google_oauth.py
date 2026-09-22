@@ -58,11 +58,14 @@ def client_config() -> dict[str, dict[str, Any]]:
 
 
 def create_flow() -> Flow:
-    return Flow.from_client_config(
+    flow = Flow.from_client_config(
         client_config(),
         scopes=SCOPES,
         redirect_uri=required_env("GOOGLE_OAUTH_REDIRECT_URI"),
+        autogenerate_code_verifier=False,
     )
+    flow.oauth2session.scope = None
+    return flow
 
 
 def save_oauth_transaction(user_id: str, state: str, code_verifier: str) -> None:
@@ -198,3 +201,4 @@ def delete_credentials(user_id: str) -> bool:
         db.commit()
 
     return True
+
