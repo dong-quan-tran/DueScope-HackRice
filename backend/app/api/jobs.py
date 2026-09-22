@@ -629,13 +629,12 @@ def proposal_kind_for_message(status: str, text: str) -> str | None:
 
 def proposal_title(kind: str, company: str) -> str:
     if kind == "online_assessment_deadline":
-        return f"Complete assessment Ã¢â‚¬â€ {company}"
+        return f"Complete assessment - {company}"
 
     if kind == "interview_scheduling_deadline":
-        return f"Choose interview time Ã¢â‚¬â€ {company}"
+        return f"Choose interview time - {company}"
 
-    return f"Interview Ã¢â‚¬â€ {company}"
-
+    return f"Interview - {company}"
 
 def create_job_calendar_proposal(
     *,
@@ -949,7 +948,7 @@ def approve_job_calendar_proposal(proposal_id: str) -> dict[str, Any]:
     proposal["resolved_at"] = datetime.now(timezone.utc).isoformat()
 
     try:
-        calendar_result = upsert_job_calendar_event(proposal)
+        calendar_result = upsert_job_calendar_event(proposal, current_user.id)
     except Exception as exc:
         proposal["status"] = "pending"
         proposal["resolved_at"] = None
