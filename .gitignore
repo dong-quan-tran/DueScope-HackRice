@@ -1,4 +1,4 @@
-# Local environment files and secrets
+﻿# Local environment files and secrets
 .env
 .env.*
 !.env.example
@@ -37,3 +37,5 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+local-recovery/
+
