@@ -400,7 +400,7 @@ export default function Home() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/demo/workspace`, {
+      const response = await apiFetch("/api/demo/workspace", {
         cache: "no-store",
       });
 
@@ -460,7 +460,7 @@ setGoogleStatusLoading(true);
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/jobs`, {
+      const response = await apiFetch("/api/jobs", {
         cache: "no-store",
       });
 
@@ -490,7 +490,7 @@ setGoogleStatusLoading(true);
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/jobs/proposals`, {
+      const response = await apiFetch("/api/jobs/proposals", {
         cache: "no-store",
       });
 
@@ -533,7 +533,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(`${API_URL}/api/canvas/courses`);
+      const response = await apiFetch("/api/canvas/courses");
       const data = await response.json();
 
       if (!response.ok) {
@@ -579,8 +579,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/canvas/import-course/${canvasCourseId}`,
+      const response = await apiFetch("/api/canvas/import-course/${canvasCourseId}",
         { method: "POST" },
       );
       const data = await response.json();
@@ -628,8 +627,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/sources/extract-and-reconcile`,
+      const response = await apiFetch("/api/sources/extract-and-reconcile",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -679,8 +677,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/events/proposals/${proposal.id}/${action}`,
+      const response = await apiFetch("/api/events/proposals/${proposal.id}/${action}",
         { method: "POST" },
       );
       const data = await response.json();
@@ -713,7 +710,7 @@ setGoogleStatusLoading(true);
 
   async function toggleApproval(event: AcademicEvent) {
     try {
-      const response = await fetch(`${API_URL}/api/events/${event.id}/approval`, {
+      const response = await apiFetch("/api/events/${event.id}/approval", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approved: !event.approved }),
@@ -751,7 +748,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(`${API_URL}/api/calendar/export`, {
+      const response = await apiFetch("/api/calendar/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ event_ids: eventIds }),
@@ -813,8 +810,7 @@ setGoogleStatusLoading(true);
     setSyncResult(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/google/calendar/sync-approved`,
+      const response = await apiFetch("/api/google/calendar/sync-approved",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -874,8 +870,7 @@ setGoogleStatusLoading(true);
     setSyncResult(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/google/calendar/sync-approved`,
+      const response = await apiFetch("/api/google/calendar/sync-approved",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -919,7 +914,7 @@ setGoogleStatusLoading(true);
     setJobScanResult(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/jobs/scan`, {
+      const response = await apiFetch("/api/jobs/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ max_results: 25 }),
@@ -973,7 +968,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(`${API_URL}/api/jobs/${job.id}`, {
+      const response = await apiFetch("/api/jobs/${job.id}", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1021,8 +1016,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/jobs/proposals/${proposal.id}/approve`,
+      const response = await apiFetch("/api/jobs/proposals/${proposal.id}/approve",
         { method: "POST" },
       );
       const data = (await response.json()) as
@@ -1062,8 +1056,7 @@ setGoogleStatusLoading(true);
     setNotice("");
 
     try {
-      const response = await fetch(
-        `${API_URL}/api/jobs/proposals/${proposal.id}/dismiss`,
+      const response = await apiFetch("/api/jobs/proposals/${proposal.id}/dismiss",
         { method: "POST" },
       );
       const data = (await response.json()) as JobCalendarProposal | { detail?: string };
@@ -1940,5 +1933,4 @@ setGoogleStatusLoading(true);
     </main>
   );
 }
-
 
