@@ -925,7 +925,10 @@ def scan_job_application_email(
 
 
 @router.post("/proposals/{proposal_id}/approve")
-def approve_job_calendar_proposal(proposal_id: str) -> dict[str, Any]:
+def approve_job_calendar_proposal(
+    proposal_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, Any]:
     proposal = next(
         (
             item
